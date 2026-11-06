@@ -1,0 +1,28 @@
+# RealVisXL V5.0 (SDXL, photorealism) for the workbench "AI" page text-to-image panel. ~7 GB, any GPU.
+id: realvisxl-v5
+title: RealVisXL V5.0 · 写实生图
+accelerator: L4
+comfyui:
+  repo: https://github.com/comfyanonymous/ComfyUI
+  commit: 2c75dc1b
+  args: [--preview-method, auto]
+frontend:
+  package: comfyui-frontend-package==1.57.6
+models:
+- id: realvisxl-v5
+  dest: checkpoints/RealVisXL_V5.0_fp16.safetensors
+  url: hf://SG161222/RealVisXL_V5.0/RealVisXL_V5.0_fp16.safetensors
+  license: openrail++
+  size_gb: 6.94
+ai:
+  type: image
+  title: RealVisXL V5.0
+  image:
+    model: realvisxl-v5
+    width: 832
+    height: 1216
+    steps: 30
+    cfg: 5
+    sampler: dpmpp_sde
+    scheduler: karras
+    negative: "bad hands, bad anatomy, ugly, deformed, (face asymmetry, eyes asymmetry, deformed eyes, deformed mouth, open mouth)"

@@ -1,0 +1,43 @@
+# Chroma1-HD (8.9B, FLUX.1-schnell based, Apache 2.0) for the workbench "AI" page text-to-image panel.
+# bf16 model 17.8 GB + T5-XXL fp16 9.8 GB + FLUX VAE; same graph as the official ComfyUI template.
+id: chroma1-hd
+title: Chroma1-HD · 生图
+accelerator: G4
+comfyui:
+  repo: https://github.com/comfyanonymous/ComfyUI
+  commit: 2c75dc1b
+  args: [--preview-method, auto]
+frontend:
+  package: comfyui-frontend-package==1.57.6
+models:
+- id: chroma1-hd
+  dest: diffusion_models/Chroma1-HD.safetensors
+  url: hf://lodestones/Chroma1-HD/Chroma1-HD.safetensors
+  license: apache-2.0
+  size_gb: 17.8
+- id: t5xxl-fp16
+  dest: text_encoders/t5xxl_fp16.safetensors
+  url: hf://comfyanonymous/flux_text_encoders/t5xxl_fp16.safetensors
+  license: apache-2.0
+  size_gb: 9.79
+- id: flux-ae
+  dest: vae/ae.safetensors
+  url: hf://Comfy-Org/Lumina_Image_2.0_Repackaged/split_files/vae/ae.safetensors
+  license: apache-2.0
+  size_gb: 0.34
+ai:
+  type: image
+  title: Chroma1-HD
+  image:
+    arch: chroma
+    model: chroma1-hd
+    clip: t5xxl-fp16
+    vae: flux-ae
+    width: 1024
+    height: 1024
+    steps: 26
+    cfg: 3.8
+    sampler: euler
+    scheduler: beta
+    shift: 1.0
+    negative: "This greyscale unfinished sketch has bad proportions, is featureless and disfigured. It is a blurry ugly mess and with excessive gaussian blur. It is riddled with watermarks and signatures. Everything is smudged with leaking colors and nonsensical orientation of objects. Messy and abstract image filled with artifacts disrupt the coherency of the overall composition. The image has extreme chromatic abberations and inconsistent lighting. Dull, monochrome colors and countless artistic errors."
