@@ -276,6 +276,68 @@ def ai_prepare():
     return t, box
 
 
+def _dir_bytes(d):
+    total = 0
+    for root, _, files in os.walk(d):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def _ollama_create(name, mf, path, every=10):
+    """`ollama create` copies the whole GGUF (tens of GB) into OLLAMA_MODELS and its progress bar is only
+    carriage-return redraws, so the log looked frozen for minutes. Read its output ourselves and print a progress line
+    every `every` seconds: elapsed time, the latest status from ollama, and how much has been written."""
+    size = os.path.getsize(path)
+    blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
+    base = _dir_bytes(blobs)
+    print(f"registering {os.path.basename(path)} ({size / 1e9:.1f} GB) with Ollama as {name} …", flush=True)
+    p = subprocess.Popen([_ollama_bin() or "ollama", "create", name, "-f", mf], env=_ollama_env(),
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    state = {"last": "", "tail": []}
+    ansi = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+
+    def reader():
+        buf = b""
+        while True:
+            ch = p.stdout.read(1)
+            if not ch:
+                break
+            if ch in (b"\r", b"\n"):
+                line = ansi.sub("", buf.decode("utf-8", "replace")).strip()
+                buf = b""
+                if line:
+                    state["last"] = line
+                    if not state["tail"] or state["tail"][-1] != line:
+                        state["tail"] = (state["tail"] + [line])[-5:]
+            else:
+                buf += ch
+
+    t = threading.Thread(target=reader, name="wb_ollama_create", daemon=True)
+    t.start()
+    t0 = time.time()
+    while True:
+        try:
+            rc = p.wait(timeout=every)
+            break
+        except subprocess.TimeoutExpired:
+            done = max(0, _dir_bytes(blobs) - base)
+            pct = f" ({min(100, done * 100 // size)}%)" if size else ""
+            msg = f"  … {int(time.time() - t0)}s, written {done / 1e9:.1f}/{size / 1e9:.1f} GB{pct}"
+            if state["last"]:
+                msg += f" · {state['last'][:100]}"
+            print(msg, flush=True)
+    t.join(5)
+    for line in state["tail"][-3:]:
+        print(f"  {line[:200]}", flush=True)
+    if rc:
+        raise RuntimeError(f"ollama create failed ({rc}): {state['last']}")
+    print(f"registered {name} in {int(time.time() - t0)}s", flush=True)
+
+
 def ai_finish(prep):
     """After the downloads: register the GGUF with Ollama and load it onto the GPU."""
     ai = PLAN.get("ai") or {}
@@ -294,9 +356,7 @@ def ai_finish(prep):
             raise RuntimeError(f"LLM model file missing: {llm['dest']}")
         mf = "/content/wb_Modelfile"
         open(mf, "w").write(f"FROM {path}\n")
-        print(f"registering {os.path.basename(path)} with Ollama as {llm['name']} …", flush=True)
-        sh(f"{_ollama_bin()} create {llm['name']} -f {mf} 2>&1 | tr '\\r' '\\n' | sed -e 's/\\x1b\\[[0-9;?]*[a-zA-Z]//g' | grep -v '^\\s*$' | tail -3",
-           env=_ollama_env())
+        _ollama_create(llm["name"], mf, path)
         print("loading the model onto the GPU …", flush=True)
         req = urllib.request.Request(OLLAMA_URL + "/api/generate", method="POST",
                                      data=json.dumps({"model": llm["name"], "keep_alive": -1}).encode(),
