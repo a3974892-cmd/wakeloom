@@ -1,0 +1,56 @@
+# Publishes a release: tests, Windows build, GitHub Release with the exe + latest.json
+# (latest.json is what the app's auto-updater reads).
+# Start it either by pushing a tag vX.Y.Z, or from the Actions tab ("Run workflow"),
+# which releases the version written in update.go (AppVersion).
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+      - name: Version
+        run: |
+          v=$(sed -n 's/^const AppVersion = "\(.*\)"/\1/p' update.go)
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "$v" ]; then
+            echo "tag $GITHUB_REF_NAME does not match update.go AppVersion $v"; exit 1
+          fi
+          echo "V=$v" >> "$GITHUB_ENV"
+          echo "TAG=v$v" >> "$GITHUB_ENV"
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: |
+          mkdir dist
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o "dist/Wakeloom-$V.exe" .
+          sha=$(sha256sum "dist/Wakeloom-$V.exe" | cut -d' ' -f1)
+          size=$(stat -c%s "dist/Wakeloom-$V.exe")
+          sed -n "/^## v$V/,/^## /p" CHANGELOG.md | sed '1d' | sed '/^## /d' | sed '/^$/d' > notes.txt
+          python3 - "$V" "$sha" "$size" <<'PY'
+          import json, os, sys
+          v, sha, size = sys.argv[1], sys.argv[2], int(sys.argv[3])
+          repo = os.environ["GITHUB_REPOSITORY"]
+          notes = " ".join(l.strip().lstrip("- ") for l in open("notes.txt", encoding="utf-8") if l.strip())
+          json.dump({"version": v, "url": f"https://github.com/{repo}/releases/download/v{v}/Wakeloom-{v}.exe",
+                     "sha256": sha, "size": size, "notes": notes}, open("dist/latest.json", "w"), ensure_ascii=False)
+          PY
+          cp gateway/gate-*.py dist/
+          cat dist/latest.json
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sed -n "/^## v$V/,/^## /p" CHANGELOG.md | sed '1d' | sed '/^## /d' > notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Wakeloom $V" --notes-file notes.md
+          fi
