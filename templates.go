@@ -18,7 +18,8 @@ type Template struct {
 	Name    string                    `json:"name"`
 	Created int64                     `json:"created"`
 	Graph   map[string]map[string]any `json:"graph"`
-	Hidden  []string                  `json:"hidden,omitempty"` // detected fields the user moved to "advanced"
+	Hidden  []string                  `json:"hidden,omitempty"`  // detected fields the user moved to "advanced"
+	Profile string                    `json:"profile,omitempty"` // start profile to wake for this template (custom models)
 }
 
 type Field struct {

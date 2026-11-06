@@ -47,6 +47,9 @@ func newServer() http.Handler {
 		if c.CFClientSecret != "" {
 			c.CFClientSecret = "********"
 		}
+		if c.HFToken != "" {
+			c.HFToken = "********"
+		}
 		llms := make([]LLMProvider, len(c.LLMs))
 		for i, p := range c.LLMs {
 			if p.APIKey != "" {
@@ -67,6 +70,10 @@ func newServer() http.Handler {
 		if c.CFClientSecret == "********" {
 			c.CFClientSecret = old.CFClientSecret
 		}
+		if c.HFToken == "********" {
+			c.HFToken = old.HFToken
+		}
+		c.HFToken = strings.TrimSpace(c.HFToken)
 		for i, p := range c.LLMs {
 			if p.ID == "" {
 				c.LLMs[i].ID = newID()
@@ -168,7 +175,7 @@ func newServer() http.Handler {
 	api.HandleFunc("GET /api/templates", func(w http.ResponseWriter, r *http.Request) {
 		out := []map[string]any{}
 		for _, t := range listTemplates() {
-			out = append(out, map[string]any{"id": t.ID, "name": t.Name, "created": t.Created, "nodes": len(t.Graph), "hidden": t.Hidden, "fields": detectFields(t)})
+			out = append(out, map[string]any{"id": t.ID, "name": t.Name, "created": t.Created, "nodes": len(t.Graph), "hidden": t.Hidden, "profile": t.Profile, "fields": detectFields(t)})
 		}
 		jsonOut(w, 200, out)
 	})
@@ -382,6 +389,8 @@ func newServer() http.Handler {
 		}
 		jsonOut(w, 200, map[string]bool{"ok": true})
 	})
+
+	registerCustomModelRoutes(api)
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		k := r.Header.Get("X-Key")

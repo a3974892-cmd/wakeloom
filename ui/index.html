@@ -330,6 +330,8 @@
             <label class="fld narrow">闲置自动停机（分钟）<input type="number" name="local_idle_min" min="5" max="600" placeholder="30"></label>
             <label class="fld narrow">最长会话（小时）<input type="number" name="local_max_hours" min="1" max="24" step="0.5" placeholder="6"></label>
           </div>
+          <label class="fld">Hugging Face 令牌（可选）<input name="hf_token" type="password" autocomplete="off" placeholder="hf_…"></label>
+          <p class="hint" style="margin-top:-6px">只有下载需要申请访问（gated）的模型时才要。只保存在本机，开机时交给 Colab VM 用来下载，不会写进日志或启动配置。网关模式用网关自己的 hf_token。</p>
           <div id="gTools" hidden>
             <div class="row gap wrap" style="margin-top:14px"><button type="button" class="btn sm" id="btnGCCU">查询 CU 余额</button><span class="muted small mono" id="gCCU"></span></div>
             <div class="row gap wrap" style="margin-top:10px">
@@ -342,7 +344,11 @@
           <p class="err" id="gErr"></p>
         </div>
 
-        <div class="sec-h"><span class="n">11</span><b>软件更新</b><span class="d" id="updCur"></span></div>
+        <div class="sec-h"><span class="n">11</span><b>自定义模型</b><span class="d">粘贴 Hugging Face 链接生成的启动配置</span><span class="grow"></span><button type="button" class="btn primary xs" id="btnCMAdd">＋ 添加模型</button></div>
+        <div class="card cm-card"><div id="cmList" class="cm-list"><p class="muted small">读取中…</p></div>
+          <p class="hint">内置配置不能修改或删除。模型来自第三方，请遵守其许可证和当地法律。</p></div>
+
+        <div class="sec-h"><span class="n">12</span><b>软件更新</b><span class="d" id="updCur"></span></div>
         <div class="card">
           <label class="fld">更新地址（latest.json）<input name="update_url" id="updUrl" placeholder=""></label>
           <div class="row gap wrap"><button type="button" class="btn sm" id="btnUpdCheck">检查更新</button><span class="muted small" id="updMsg"></span></div>
@@ -358,5 +364,6 @@
 <div class="toast" id="toast"></div>
 <script src="app.js"></script>
 <script src="ai.js"></script>
+<script src="models.js"></script>
 </body>
 </html>

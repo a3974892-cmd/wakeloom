@@ -1,0 +1,20 @@
+{
+ "_id": "x",
+ "id": "lodestones/Chroma1-HD",
+ "private": false,
+ "gated": false,
+ "pipeline_tag": "text-to-image",
+ "library_name": "diffusers",
+ "tags": [
+  "diffusers",
+  "safetensors",
+  "text-to-image",
+  "license:apache-2.0",
+  "diffusers:ChromaPipeline",
+  "region:us"
+ ],
+ "cardData": {
+  "license": "apache-2.0",
+  "pipeline_tag": "text-to-image"
+ }
+}

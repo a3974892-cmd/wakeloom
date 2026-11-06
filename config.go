@@ -29,6 +29,7 @@ type Config struct {
 	LocalIdleMin     int           `json:"local_idle_min"`
 	LocalMaxHours    float64       `json:"local_max_hours"`
 	UpdateURL        string        `json:"update_url"`
+	HFToken          string        `json:"hf_token"` // local mode: Hugging Face token for gated models (stays on this PC)
 }
 
 var (

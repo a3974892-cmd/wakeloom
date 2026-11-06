@@ -344,6 +344,9 @@ func waitReady(j *Job) bool {
 				if c.WakeProfile != "" {
 					body["profile"] = c.WakeProfile
 				}
+				if t, err := loadTemplate(j.TemplateID); err == nil && t.Profile != "" {
+					body["profile"] = t.Profile // a custom model linked to this template
+				}
 				var out map[string]any
 				if err := gateJSON("POST", "/_gate/wake", body, &out); err != nil {
 					store.update(j, func(j *Job) { j.Status, j.Message = "waiting", "自动唤醒失败："+err.Error() })

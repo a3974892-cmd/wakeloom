@@ -1,0 +1,97 @@
+[
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 1600,
+  "path": ".gitattributes"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 4200,
+  "path": "README.md"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 16550000000,
+  "path": "Huihui-Qwen3.8-27B-abliterated-Q4_K_M.gguf",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 16550000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 19400000000,
+  "path": "Huihui-Qwen3.8-27B-abliterated-Q5_K_M.gguf",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 19400000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 22400000000,
+  "path": "Huihui-Qwen3.8-27B-abliterated-Q6_K.gguf",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 22400000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 29050000000,
+  "path": "Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 29050000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 930000000,
+  "path": "mmproj-Huihui-Qwen3.8-27B-abliterated-F16.gguf",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 930000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "BF16"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 29000000000,
+  "path": "BF16/Huihui-Qwen3.8-27B-abliterated-BF16-00001-of-00002.gguf",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 29000000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 25600000000,
+  "path": "BF16/Huihui-Qwen3.8-27B-abliterated-BF16-00002-of-00002.gguf",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 25600000000,
+   "pointerSize": 135
+  }
+ }
+]

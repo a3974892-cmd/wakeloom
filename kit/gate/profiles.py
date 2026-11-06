@@ -18,7 +18,10 @@ FORBIDDEN_KEY = re.compile(r"(token|secret|password|passwd|api[_-]?key|authoriza
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 URL_RE = re.compile(r"^(https://[^\s?#]+|hf://[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9_.-]+)?/[^\s?#]+)$")
 MODEL_DIRS = {"checkpoints", "diffusion_models", "text_encoders", "clip", "vae", "loras", "upscale_models",
-              "controlnet", "embeddings", "clip_vision", "unet", "rapid_moss", "model_patches", "llm"}
+              "controlnet", "embeddings", "clip_vision", "unet", "rapid_moss", "model_patches", "llm",
+              # wb-dirs: more ComfyUI model folders for user-added profiles
+              "style_models", "gligen", "hypernetworks", "photomaker", "vae_approx", "audio_encoders",
+              "latent_upscale_models", "ipadapter", "sams", "ultralytics", "insightface", "instantid"}
 
 
 #: flags the kit sets itself (the tunnel and gate depend on them)
@@ -394,6 +397,74 @@ def load_all(refs: list[str] | tuple[str, ...], root: Path) -> tuple[dict[str, P
         except (ProfileError, yaml.YAMLError) as e:
             errors[r] = str(e)
     return ok, errors
+
+
+# ── wb-custom: user-added profiles (Wakeloom "添加模型"), STATE_DIR/custom_profiles/<id>/profile.yaml ──
+CUSTOM_DIR = "custom_profiles"
+CUSTOM_PREFIX = "custom-"
+CUSTOM_MAX_BYTES = 64 * 1024
+
+
+def custom_root(state_dir) -> Path:
+    return Path(state_dir) / CUSTOM_DIR
+
+
+def custom_ids(state_dir) -> set[str]:
+    root = custom_root(state_dir)
+    if not root.is_dir():
+        return set()
+    return {d.name for d in root.iterdir() if (d / "profile.yaml").is_file()}
+
+
+def load_custom(state_dir, builtin=()) -> tuple[dict[str, Profile], dict[str, str]]:
+    """Profiles saved through /_gate/custom-profiles. They never shadow a built-in (PROFILES) id."""
+    ok: dict[str, Profile] = {}
+    errors: dict[str, str] = {}
+    for name in sorted(custom_ids(state_dir)):
+        try:
+            prof = load_profile(custom_root(state_dir) / name / "profile.yaml")
+            if prof.id != name:
+                raise ProfileError(f"id {prof.id!r} does not match its folder {name!r}")
+            if prof.id in builtin:
+                raise ProfileError(f"{prof.id!r} would replace a built-in profile")
+            ok[prof.id] = prof
+        except (ProfileError, yaml.YAMLError, OSError) as e:
+            errors[f"custom:{name}"] = str(e)
+    return ok, errors
+
+
+def save_custom(state_dir, text, builtin=()) -> Profile:
+    """Validate a user-added profile.yaml (same rules as every profile) and store it."""
+    if not isinstance(text, str) or not text.strip():
+        raise ProfileError("profile.yaml is empty")
+    if len(text.encode("utf-8")) > CUSTOM_MAX_BYTES:
+        raise ProfileError(f"profile.yaml is larger than {CUSTOM_MAX_BYTES // 1024} KB")
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ProfileError(f"invalid YAML: {e}") from None
+    if not isinstance(data, dict):
+        raise ProfileError("profile must be a mapping")
+    pid = str(data.get("id") or "")
+    if not pid.startswith(CUSTOM_PREFIX):
+        raise ProfileError(f"custom profile ids must start with {CUSTOM_PREFIX!r}")
+    if pid in builtin:
+        raise ProfileError(f"{pid!r} is a built-in profile and cannot be replaced")
+    prof = parse_profile(data, custom_root(state_dir) / pid)  # also rejects ids that are not [a-z0-9-]
+    d = custom_root(state_dir) / prof.id
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "profile.yaml.tmp"
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(d / "profile.yaml")
+    return prof
+
+
+def delete_custom(state_dir, pid) -> bool:
+    import shutil
+    if not ID_RE.match(str(pid or "")) or pid not in custom_ids(state_dir):
+        return False
+    shutil.rmtree(custom_root(state_dir) / pid)
+    return True
 
 
 def hf_to_https(url: str) -> str:

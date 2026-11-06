@@ -15,6 +15,9 @@ Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，
 | `jobs.go`、`templates.go`、`labels.go` | 任务队列、ComfyUI API 工作流模板、参数中文名/推荐值 |
 | `ai.go`、`llm.go`（`//go:embed prompts/h3_guide.md`） | AI 页对话（经 ComfyUI 的 `/wbllm` 路由到 VM 上的 Ollama）、AI 写提示词 |
 | `gpu.go` | GPU/系统负载面板 |
+| `custom_models.go` | 「添加模型」：解析 HF 链接、读 HF API（走 proxy.go 的 transport）、识别四种类型、推荐 GPU、生成并校验 profile.yaml（`validateProfileYAML` 是 kit/gate/profiles.py `parse_profile` 的 Go 版）；本地网关的 `/_gate/custom-profiles` |
+| `ui/models.js` | 「添加模型」弹窗、设置里的自定义模型列表（依赖 app.js / ai.js 的全局函数） |
+| `testdata/hf/` | 手工构造的 HF API 响应（测试用） |
 | `update.go` | 自动更新：读 GitHub Releases 的 `latest.json`，校验 SHA-256 后替换；`AppVersion` 在这里 |
 | `*_windows.go` / `*_other.go` | 平台相关（窗口、单实例、系统代理）；非 Windows 版本只是桩，便于 Linux 上测试 |
 | `rsrc_windows_amd64.syso`、`winres/` | 图标/版本资源（go-winres 生成） |
@@ -34,7 +37,8 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H wi
 
 - 可在 Linux 上测试和交叉编译（Go 1.24.7，见 go.mod）。
 - 部分测试需要环境变量（如 `JUPYTER_TEST_URL`），没设会自动跳过。
-- 调试：`CKWB_HEADLESS=1 [CKWB_PORT=xxxx] go run .` 只起本地服务、打印 URL，不开窗口。
+- 调试：`CKWB_HEADLESS=1 [CKWB_PORT=xxxx] go run .` 只起本地服务、打印 URL，不开窗口。`CKWB_HF_BASE=http://127.0.0.1:端口` 可把 Hugging Face API 指到本地假服务（UI 测试用，数据见 `testdata/hf/`）。
+- `custom_models_test.go` 会调用 python3 + PyYAML 用 kit 的 `parse_profile` 交叉校验 Go 生成的 YAML，并比对 `MODEL_DIRS`；改目录列表或校验规则时两边要同步（Python 侧在 `gateway/src/edits.py` 的 `MODEL_DIRS` / `CUSTOM`）。
 - 图标/版本资源改动后：`go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64 --out rsrc`
 
 ## 修改 kit / 网关补丁（重要）
@@ -46,6 +50,8 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H wi
 3. `python3 gateway/gate-ai.py kit` → 同步到内嵌 kit（带区域标记的修改会整段替换）。
 4. 删除生成的 `.bak`：`find kit -name '*.bak' -delete`，以及 `__pycache__`。
 5. 自检：再跑一次 `python3 gateway/gate-ai.py kit` 应全部显示 `= … up to date`。
+
+网关专用的修改（`apps/gate/app.py`、`session.py`：`/_gate/custom-profiles` 接口与加载 `STATE_DIR/custom_profiles`）在 `edits.py` 的 `APP` / `SESSION` 里，只对网关目录生效，内嵌 kit 没有这两个文件。测试网关补丁：把 FireTable/comfy-colab-kit 克隆到临时目录，依次运行 `gate-gpu-select.py`、`gate-library.py`、旧版和新版 `gate-ai.py`，再在那里跑 `pytest tests/test_wb_custom_profiles.py`。
 
 内置启动配置（Qwen3.8 27B、RealVisXL V5.0、Chroma1-HD）的 profile.yaml 也来自 `edits.py` 的 `PROFILE_*`，步骤 3 会覆盖 `kit/profiles/` 下对应文件。
 kit 的日志输出用英文；程序界面和更新日志用中文。

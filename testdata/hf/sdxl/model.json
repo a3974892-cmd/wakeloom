@@ -1,0 +1,19 @@
+{
+ "_id": "x",
+ "id": "SG161222/RealVisXL_V5.0",
+ "private": false,
+ "gated": false,
+ "pipeline_tag": "text-to-image",
+ "library_name": "diffusers",
+ "tags": [
+  "diffusers",
+  "safetensors",
+  "license:openrail++",
+  "endpoints_compatible",
+  "diffusers:StableDiffusionXLPipeline",
+  "region:us"
+ ],
+ "cardData": {
+  "license": "openrail++"
+ }
+}
