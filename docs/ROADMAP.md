@@ -6,6 +6,8 @@
 
 2026-11-07：用户已要求同步 1.21.2 到 GitHub，进入正式发布；以随后记录的 Release、附件与自动更新核验结果为准。
 
+**发布核验完成：** [v1.21.2](https://github.com/a3974892-cmd/wakeloom/releases/tag/v1.21.2) 已正式发布，源码/标签提交 `d992c48c613c5c9f0c6a7a031c4e6fa5a54edb48`。[流水线](https://github.com/a3974892-cmd/wakeloom/actions/runs/42341318829) 的 Go 测试、图片模型检查及 Windows 构建全部成功。实际下载的 exe 为 10,115,072 字节，SHA-256 `b3a83292df5cc21d872743fe15c9d39f2c3671ba748a6121983de0ecbd28c39c`，与附件摘要、自动更新清单一致；构建信息确认 Go 1.24.7、提交一致、工作树未修改。latest API、无查询参数的 latest/download/latest.json 及版本固定清单均已核对为 1.21.2；发布后短暂的下载缓存滞后已消退。未替换用户当前程序，未操作 GPU 会话。
+
 - 用户截图显示 Qwen-Image 2.1 已就绪，但 AI 页只展示 llm/image 配置与自定义模型，生成页停留在旧 Chroma 模板。根因是内置非 ai 配置被使用页面过滤，不代表模型没有部署。
 - 增加官方工作流入口，覆盖 Qwen 等无快捷表单的内置配置，展示当前运行配置、默认及其他工作流、打开 ComfyUI、下载原始 UI JSON。UI JSON 不冒充 API 模板；需要桌面队列时仍由 ComfyUI 导出 API JSON 后导入。
 - 前后端均检查绑定配置的模板与当前运行配置，防止旧 Chroma 任务提交到 Qwen 环境。保留旧模板和草稿，不删除数据。
