@@ -1,0 +1,59 @@
+[
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 1600,
+  "path": ".gitattributes"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 19000,
+  "path": "LICENSE.md"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 530,
+  "path": "model_index.json"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 23800000000,
+  "path": "flux1-dev.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 23800000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 335000000,
+  "path": "ae.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 335000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "transformer"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 9980000000,
+  "path": "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 9980000000,
+   "pointerSize": 135
+  }
+ }
+]

@@ -16,7 +16,7 @@ A Windows desktop workbench that wakes a Colab GPU on demand and turns it into a
 - **AI 页**：
   - 对话：Qwen3.8 27B（GGUF，Ollama 运行在你的 GPU 上），多轮对话、深度思考开关、一键把回复用作生成提示词。
   - 生图：RealVisXL V5.0（SDXL 写实）、Chroma1-HD（FLUX 架构）。
-  - 新模型只需加一个启动配置，就会自动出现在 AI 页。
+  - **自定义添加模型**：粘贴 Hugging Face 链接，自动识别类型（GGUF 对话 / SDXL / Chroma / 任意 ComfyUI 模型）、大小与许可证，推荐 GPU 和参数，一键生成启动配置。
 - **两种连接方式**：
   - **网关模式**：连接你自己部署的 [comfy-colab-kit](https://github.com/FireTable/comfy-colab-kit) 网关（VPS），可多人共用。
   - **本地模式（实验）**：不需要 VPS，软件直接用你的 Google 账号开关 Colab。

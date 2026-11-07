@@ -1,0 +1,36 @@
+{
+ "_id": "x",
+ "id": "huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF",
+ "author": "huihui-ai",
+ "private": false,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "library_name": "gguf",
+ "tags": [
+  "gguf",
+  "qwen3",
+  "abliterated",
+  "uncensored",
+  "text-generation",
+  "conversational",
+  "license:apache-2.0",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "cardData": {
+  "license": "apache-2.0",
+  "library_name": "gguf",
+  "base_model": [
+   "huihui-ai/Huihui-Qwen3.8-27B-abliterated"
+  ]
+ },
+ "gguf": {
+  "total": 27200000000,
+  "architecture": "qwen3",
+  "context_length": 262144,
+  "chat_template": "{%- if enable_thinking %}<think>\n{%- endif %}",
+  "bos_token": ",",
+  "eos_token": "<|im_end|>"
+ },
+ "siblings": []
+}

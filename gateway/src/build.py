@@ -10,7 +10,8 @@ body = f'''#!/usr/bin/env python3
 """comfy-colab-kit: "AI" profiles for the workbench – local LLM (Ollama + GGUF) and image checkpoints.
 
 Adds an optional `ai:` block to profiles, an /wbllm/... route inside ComfyUI that reaches the VM's
-Ollama server, and ready-made profiles (Qwen3.8 27B abliterated Q8_0, RealVisXL V5.0, Chroma1-HD).
+Ollama server, ready-made profiles (Qwen3.8 27B abliterated Q8_0, RealVisXL V5.0, Chroma1-HD), and
+user-added profiles (GET/POST/DELETE /_gate/custom-profiles, stored in STATE_DIR/custom_profiles).
 
 VPS (as root):   python3 gate-ai.py /opt/comfy-colab-kit
                  then: cd /opt/comfy-colab-kit && docker compose -f deploy/docker-compose.yml up -d --force-recreate
@@ -25,12 +26,16 @@ ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 PROFILES = {E.PROFILES!r}
 PLAN = {E.PLAN!r}
 SETUP = {E.SETUP!r}
+APP = {E.APP!r}
+SESSION = {E.SESSION!r}
+TEST_CUSTOM = {E.TEST_CUSTOM!r}
 NEW_PROFILES = {{"qwen38-27b-chat": {E.PROFILE_QWEN!r}, "realvisxl-v5": {E.PROFILE_REALVIS!r}, "chroma1-hd": {E.PROFILE_CHROMA!r}}}
 
 
 def main():
     if (ROOT / "apps/gate/profiles.py").is_file():
-        layout = {{"profiles": "apps/gate/profiles.py", "plan": "apps/gate/plan.py", "setup": "packages/colab/setup.py"}}
+        layout = {{"profiles": "apps/gate/profiles.py", "plan": "apps/gate/plan.py", "setup": "packages/colab/setup.py",
+                  "app": "apps/gate/app.py", "session": "apps/gate/session.py"}}
         prof_dir, env_file = ROOT / "profiles/custom", ROOT / ".env"
     elif (ROOT / "gate/profiles.py").is_file():
         layout = {{"profiles": "gate/profiles.py", "plan": "gate/plan.py", "setup": "colab/setup.py"}}
@@ -38,7 +43,9 @@ def main():
     else:
         sys.exit(f"✗ {{ROOT}} is not the comfy-colab-kit folder – run: python3 gate-ai.py /opt/comfy-colab-kit")
     todo = []
-    for key, edits in (("profiles", PROFILES), ("plan", PLAN), ("setup", SETUP)):
+    for key, edits in (("profiles", PROFILES), ("plan", PLAN), ("setup", SETUP), ("app", APP), ("session", SESSION)):
+        if key not in layout:
+            continue  # the embedded kit has no gate server (app.py / session.py)
         p = ROOT / layout[key]
         src = p.read_text(encoding="utf-8")
         out, changed = src, 0
@@ -72,6 +79,9 @@ def main():
         p.with_suffix(p.suffix + ".bak").write_bytes(p.read_bytes())
         p.write_text(out, encoding="utf-8")
         print(f"✓ patched {{p.relative_to(ROOT)}} ({{changed}} change(s), backup: {{p.name}}.bak)")
+    if "app" in layout and (ROOT / "tests").is_dir():
+        (ROOT / "tests/test_wb_custom_profiles.py").write_text(TEST_CUSTOM, encoding="utf-8")
+        print("✓ tests/test_wb_custom_profiles.py")
     added = []
     for pid, text in NEW_PROFILES.items():
         d = prof_dir / pid

@@ -66,6 +66,8 @@ function aiModelReady() {
 }
 
 // ---- profile picker ----
+const AI_ADD_CARD = `<button type="button" class="card ai-card ai-add" id="aiAddModel"><span class="ai-add-plus">＋</span><b>添加模型</b>
+  <span class="muted small">粘贴 Hugging Face 链接，自动识别类型、大小，推荐 GPU 和参数</span></button>`;
 function aiPickRender() {
   const list = aiProfiles();
   const running = gst && gst.state && gst.state !== "sleeping" && gst.state !== "failed";
@@ -74,17 +76,18 @@ function aiPickRender() {
   if (running && cur && !cur.ai) html += `<div class="card ai-note">GPU 现在运行的是「${esc(cur.title || cur.id)}」，不是 AI 配置。要用 AI，先在控制台<b>停止</b>，再从下面选一个配置唤醒。</div>`;
   if (!list.length) {
     html += `<div class="card empty">${isLocal() ? "没有找到 AI 启动配置。" : "网关还没有 AI 启动配置：需要先在 VPS 上运行 <code>gate-ai.py</code> 补丁并重建网关容器。"}</div>`;
+    html += `<div class="ai-cards">${AI_ADD_CARD}</div>`;
   } else {
     html += `<div class="ai-cards">` + list.map(p => {
       const a = p.ai, llm = a.type === "llm";
       const chroma = !llm && a.image.arch === "chroma";
       const meta = llm ? `Ollama · 上下文 ${Math.round((a.llm.ctx || 32768) / 1024)}K` : `${chroma ? "Chroma (FLUX)" : "SDXL 检查点"} · 默认 ${a.image.width}×${a.image.height} · ${a.image.steps} 步`;
-      const gpu = llm ? "建议 G4 / A100 / H100（显存 ≥ 40 GB）" : chroma ? "建议 G4 / A100（显存 ≥ 32 GB）" : "任意 GPU（L4 就够）";
+      const gpu = p.id.startsWith("custom-") ? `建议 ${p.accelerator || "L4"}` : llm ? "建议 G4 / A100 / H100（显存 ≥ 40 GB）" : chroma ? "建议 G4 / A100（显存 ≥ 32 GB）" : "任意 GPU（L4 就够）";
       const btn = running ? `<button class="btn sm" disabled>先停止当前 GPU</button>` : `<button class="btn primary sm" data-aiwake="${esc(p.id)}">用它唤醒</button>`;
       return `<div class="card ai-card"><div class="row between"><span class="pill ${llm ? "llm" : "img"}">${llm ? "对话" : "生图"}</span><span class="muted small mono">约 ${p.size_gb_default ?? "?"} GB</span></div>
-        <h3>${esc(a.title || p.title)}</h3><p class="muted small">${esc(p.title)}</p><p class="small">${esc(meta)}</p><p class="muted small">${esc(gpu)}</p>
+        <h3>${esc(a.title || p.title)}</h3><p class="muted small">${p.id.startsWith("custom-") ? "自定义模型" : esc(p.title)}</p><p class="small">${esc(meta)}</p><p class="muted small">${esc(gpu)}</p>
         <div class="row end">${btn}</div></div>`;
-    }).join("") + `</div>`;
+    }).join("") + AI_ADD_CARD + `</div>`;
   }
   $("#aiPick").innerHTML = html;
   $$("[data-aiwake]").forEach(b => b.onclick = () => aiWake(b.dataset.aiwake));

@@ -15,6 +15,8 @@ cd /opt/comfy-colab-kit && docker compose -f deploy/docker-compose.yml up -d --f
 |---|---|
 | `gate-gpu-select.py` | `/_gate/wake` 接受 `accelerator`，`/_gate/status` 返回本次与默认 GPU |
 | `gate-library.py` | 保存插件/模型清单，按需装到运行中的 GPU，或每次开机自动装 |
-| `gate-ai.py` | 启动配置支持 `ai:` 块（llm / image）、`models/llm` 目录、ComfyUI 内 `/wbllm` 路由转发到 VM 上的 Ollama；内置 Qwen3.8 27B、RealVisXL V5.0、Chroma1-HD 配置并写进 `.env` 的 `PROFILES`；修复大模型放不进内存时跳过克隆 ComfyUI 的问题 |
+| `gate-ai.py` | 启动配置支持 `ai:` 块（llm / image）、`models/llm` 等更多模型目录、ComfyUI 内 `/wbllm` 路由转发到 VM 上的 Ollama；内置 Qwen3.8 27B、RealVisXL V5.0、Chroma1-HD 配置并写进 `.env` 的 `PROFILES`；软件「添加模型」用的 `GET/POST/DELETE /_gate/custom-profiles`（仅 owner / agent 令牌，存到 `STATE_DIR/custom_profiles/`，用 `parse_profile` 校验，最大 64 KB，使用中的配置删除返回 409）；修复大模型放不进内存时跳过克隆 ComfyUI 的问题 |
+
+升级：直接用新版 `gate-ai.py` 再运行一次即可原地升级（旧补丁的区块会被整段替换），然后重建容器。补丁同时写入 `tests/test_wb_custom_profiles.py`。
 
 `gate-ai.py` 由 `src/edits.py` + `src/build.py` 生成：改 `edits.py` 后运行 `python3 src/build.py`。程序内嵌的 `kit/` 也用它升级：`python3 gateway/gate-ai.py kit`（之后删掉生成的 `.bak`）。

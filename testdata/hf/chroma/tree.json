@@ -1,0 +1,93 @@
+[
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 1500,
+  "path": ".gitattributes"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 5000,
+  "path": "README.md"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 500,
+  "path": "model_index.json"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 17800000000,
+  "path": "Chroma1-HD.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 17800000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "transformer"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 9900000000,
+  "path": "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 9900000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 7900000000,
+  "path": "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 7900000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "text_encoder"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 4990000000,
+  "path": "text_encoder/model-00001-of-00002.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 4990000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "vae"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 168000000,
+  "path": "vae/diffusion_pytorch_model.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 168000000,
+   "pointerSize": 135
+  }
+ }
+]

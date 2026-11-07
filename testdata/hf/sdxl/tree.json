@@ -1,0 +1,93 @@
+[
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 1500,
+  "path": ".gitattributes"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 900,
+  "path": "README.md"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 700,
+  "path": "model_index.json"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 6940000000,
+  "path": "RealVisXL_V5.0_fp16.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 6940000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 13880000000,
+  "path": "RealVisXL_V5.0_fp32.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 13880000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "unet"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 5140000000,
+  "path": "unet/diffusion_pytorch_model.fp16.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 5140000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "vae"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 167000000,
+  "path": "vae/diffusion_pytorch_model.fp16.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 167000000,
+   "pointerSize": 135
+  }
+ },
+ {
+  "type": "directory",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 0,
+  "path": "text_encoder"
+ },
+ {
+  "type": "file",
+  "oid": "0000000000000000000000000000000000000000",
+  "size": 246000000,
+  "path": "text_encoder/model.fp16.safetensors",
+  "lfs": {
+   "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 246000000,
+   "pointerSize": 135
+  }
+ }
+]

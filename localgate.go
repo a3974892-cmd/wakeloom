@@ -303,6 +303,8 @@ func (g *LocalGate) serve(w http.ResponseWriter, r *http.Request) {
 		g.events(w, r)
 	case p == "/_gate/profiles":
 		jsonOut(w, 200, localProfilesSummary())
+	case p == "/_gate/custom-profiles" || strings.HasPrefix(p, "/_gate/custom-profiles/"):
+		g.customProfiles(w, r)
 	case p == "/_gate/wake" && r.Method == "POST":
 		g.wakeHandler(w, r)
 	case p == "/_gate/stop" && r.Method == "POST":
@@ -569,6 +571,7 @@ func (g *LocalGate) boot(ctx context.Context, pr *LocalProfile, workflows []stri
 	code := "import os, subprocess, runpy\n" +
 		"subprocess.run(['bash','-lc','rm -rf /content/kit && mkdir -p /content/kit && tar -xzf /content/kit.tgz -C /content/kit'], check=True)\n" +
 		fmt.Sprintf("os.environ['WB_KEY']=%q\n", g.wbKey) +
+		hfTokenEnv() +
 		fmt.Sprintf("_wb = runpy.run_path(%q, run_name='__main__'); del _wb\n", bootstrapDriver)
 	g.execMu.Lock()
 	err = rt.Exec(ctx, code, g.handleLine)
@@ -1041,6 +1044,17 @@ func buildKitTarball(p *LocalProfile, request map[string]any) ([]byte, error) {
 	tw.Close()
 	gz.Close()
 	return buf.Bytes(), nil
+}
+
+// hfTokenEnv hands the optional Hugging Face token (settings, local mode) to setup.py, which only sends it
+// to huggingface.co, strips it on redirects and removes it from the ComfyUI / Ollama environments.
+// The exec code itself is never logged.
+func hfTokenEnv() string {
+	t := strings.TrimSpace(getConfig().HFToken)
+	if t == "" || strings.ContainsAny(t, "'\"\\\n\r") {
+		return ""
+	}
+	return fmt.Sprintf("os.environ['HF_TOKEN']=%q\n", t)
 }
 
 func validTunnel(u string) bool {

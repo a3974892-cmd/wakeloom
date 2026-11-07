@@ -95,8 +95,87 @@ def _parse_ai(raw, models: dict, pid: str) -> dict | None:
 
 def parse_profile('''
 
+MODEL_DIRS = '''MODEL_DIRS = {"checkpoints", "diffusion_models", "text_encoders", "clip", "vae", "loras", "upscale_models",
+              "controlnet", "embeddings", "clip_vision", "unet", "rapid_moss", "model_patches", "llm",
+              # wb-dirs: more ComfyUI model folders for user-added profiles
+              "style_models", "gligen", "hypernetworks", "photomaker", "vae_approx", "audio_encoders",
+              "latent_upscale_models", "ipadapter", "sams", "ultralytics", "insightface", "instantid"}
+'''
+
+CUSTOM = r'''
+# ── wb-custom: user-added profiles (Wakeloom "添加模型"), STATE_DIR/custom_profiles/<id>/profile.yaml ──
+CUSTOM_DIR = "custom_profiles"
+CUSTOM_PREFIX = "custom-"
+CUSTOM_MAX_BYTES = 64 * 1024
+
+
+def custom_root(state_dir) -> Path:
+    return Path(state_dir) / CUSTOM_DIR
+
+
+def custom_ids(state_dir) -> set[str]:
+    root = custom_root(state_dir)
+    if not root.is_dir():
+        return set()
+    return {d.name for d in root.iterdir() if (d / "profile.yaml").is_file()}
+
+
+def load_custom(state_dir, builtin=()) -> tuple[dict[str, Profile], dict[str, str]]:
+    """Profiles saved through /_gate/custom-profiles. They never shadow a built-in (PROFILES) id."""
+    ok: dict[str, Profile] = {}
+    errors: dict[str, str] = {}
+    for name in sorted(custom_ids(state_dir)):
+        try:
+            prof = load_profile(custom_root(state_dir) / name / "profile.yaml")
+            if prof.id != name:
+                raise ProfileError(f"id {prof.id!r} does not match its folder {name!r}")
+            if prof.id in builtin:
+                raise ProfileError(f"{prof.id!r} would replace a built-in profile")
+            ok[prof.id] = prof
+        except (ProfileError, yaml.YAMLError, OSError) as e:
+            errors[f"custom:{name}"] = str(e)
+    return ok, errors
+
+
+def save_custom(state_dir, text, builtin=()) -> Profile:
+    """Validate a user-added profile.yaml (same rules as every profile) and store it."""
+    if not isinstance(text, str) or not text.strip():
+        raise ProfileError("profile.yaml is empty")
+    if len(text.encode("utf-8")) > CUSTOM_MAX_BYTES:
+        raise ProfileError(f"profile.yaml is larger than {CUSTOM_MAX_BYTES // 1024} KB")
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ProfileError(f"invalid YAML: {e}") from None
+    if not isinstance(data, dict):
+        raise ProfileError("profile must be a mapping")
+    pid = str(data.get("id") or "")
+    if not pid.startswith(CUSTOM_PREFIX):
+        raise ProfileError(f"custom profile ids must start with {CUSTOM_PREFIX!r}")
+    if pid in builtin:
+        raise ProfileError(f"{pid!r} is a built-in profile and cannot be replaced")
+    prof = parse_profile(data, custom_root(state_dir) / pid)  # also rejects ids that are not [a-z0-9-]
+    d = custom_root(state_dir) / prof.id
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "profile.yaml.tmp"
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(d / "profile.yaml")
+    return prof
+
+
+def delete_custom(state_dir, pid) -> bool:
+    import shutil
+    if not ID_RE.match(str(pid or "")) or pid not in custom_ids(state_dir):
+        return False
+    shutil.rmtree(custom_root(state_dir) / pid)
+    return True
+
+
+def hf_to_https('''
+
 PROFILES = [
-    ('"rapid_moss", "model_patches"}', '"rapid_moss", "model_patches", "llm"}'),
+    ('"rapid_moss", "model_patches"}\n', MODEL_DIRS, ("MODEL_DIRS = {", "}\n")),
+    ("\ndef hf_to_https(", CUSTOM, ("\n# ── wb-custom: user-added profiles", "\ndef hf_to_https(")),
     ("    model_aliases: dict = field(default_factory=dict)\n",
      "    model_aliases: dict = field(default_factory=dict)\n    ai: dict | None = None  # wb-ai\n"),
     ("        ids |= set(self.smoke.models if self.smoke else ())\n",
@@ -401,6 +480,158 @@ SETUP = [
      '        if time.time() - t0 > max_s:\n',
      ('        if (PLAN.get("ai") or {}).get("type") == "llm"', '        if time.time() - t0 > max_s:\n')),
 ]
+
+CUSTOM_HANDLERS = r'''
+# ── wb-custom: user-added profiles (Wakeloom "添加模型") ─────────────────────────────────────────────
+def _custom_denied(request: web.Request) -> web.Response | None:
+    ident = _ident(request)
+    if ident.is_owner or ident.kind == "agent":
+        return None
+    return err(403, "owner_only", "custom profiles are restricted to owners and agent tokens")
+
+
+async def custom_profiles_list(request: web.Request) -> web.Response:
+    """GET /_gate/custom-profiles: user-added profiles (raw profile.yaml) + load errors."""
+    if (denied := _custom_denied(request)) is not None:
+        return denied
+    sd = request.app[SETTINGS].state_dir
+    profs = request.app[SESSION].profiles
+    _, errors = load_custom(sd)
+    items = []
+    for pid in sorted(custom_ids(sd)):
+        p = profs.get(pid)
+        items.append({"id": pid, "title": p.title if p else pid, "loaded": p is not None,
+                      "error": errors.get(f"custom:{pid}", ""),
+                      "yaml": (custom_root(sd) / pid / "profile.yaml").read_text(encoding="utf-8")})
+    return web.json_response({"items": items, "max_bytes": CUSTOM_MAX_BYTES})
+
+
+async def custom_profiles_save(request: web.Request) -> web.Response:
+    """POST /_gate/custom-profiles {"yaml": "<profile.yaml>"}: validate (parse_profile) and add / replace."""
+    if (denied := _custom_denied(request)) is not None:
+        return denied
+    if (request.content_length or 0) > 2 * CUSTOM_MAX_BYTES:
+        return err(413, "too_large", f"profile.yaml is larger than {CUSTOM_MAX_BYTES // 1024} KB")
+    body = await _body(request)
+    s = request.app[SESSION]
+    sd = request.app[SETTINGS].state_dir
+    builtin = set(s.profiles) - custom_ids(sd)
+    try:
+        prof = save_custom(sd, body.get("yaml"), builtin)
+    except ProfileError as e:
+        return err(400, "bad_profile", str(e))
+    s.profiles[prof.id] = prof
+    return web.json_response({"id": prof.id, "profile": prof.summary()})
+
+
+async def custom_profiles_delete(request: web.Request) -> web.Response:
+    """DELETE /_gate/custom-profiles/{id}: 409 while that profile is awake or waking."""
+    if (denied := _custom_denied(request)) is not None:
+        return denied
+    s = request.app[SESSION]
+    sd = request.app[SETTINGS].state_dir
+    pid = request.match_info["id"]
+    if pid not in custom_ids(sd):
+        return err(404, "unknown_profile", "no such custom profile (built-in profiles cannot be deleted)")
+    if s.machine.profile == pid and s.machine.state not in (State.SLEEPING, State.FAILED):
+        return err(409, "in_use", "this profile is in use; stop the GPU first")
+    delete_custom(sd, pid)
+    s.profiles.pop(pid, None)
+    return web.json_response({"deleted": pid})
+
+
+async def switch(request: web.Request) -> web.Response:
+'''
+
+APP = [
+    ("from .profiles import Profile, load_all\n",
+     "from .profiles import Profile, load_all\n"
+     "from .profiles import (CUSTOM_MAX_BYTES, ProfileError, custom_ids, custom_root, delete_custom,  # wb-custom\n"
+     "                       load_custom, save_custom)\n"),
+    ("        profiles, errors = load_all(settings.profiles, REPO_ROOT)\n    else:\n",
+     "        profiles, errors = load_all(settings.profiles, REPO_ROOT)\n"
+     "        custom, cerrors = load_custom(settings.state_dir, profiles)  # wb-custom\n"
+     "        profiles.update(custom)\n        errors.update(cerrors)\n    else:\n"),
+    ("\nasync def switch(request: web.Request) -> web.Response:\n", CUSTOM_HANDLERS,
+     ("\n# ── wb-custom: user-added profiles", "\nasync def switch(request: web.Request) -> web.Response:\n")),
+    ('    r.add_post("/_gate/fetch", fetch)\n',
+     '    r.add_post("/_gate/fetch", fetch)\n'
+     '    r.add_get("/_gate/custom-profiles", custom_profiles_list)\n'
+     '    r.add_post("/_gate/custom-profiles", custom_profiles_save)\n'
+     '    r.add_delete("/_gate/custom-profiles/{id}", custom_profiles_delete)\n'),
+]
+
+SESSION = [
+    ("        fresh, errors = load_all(self.settings.profiles, REPO_ROOT)\n",
+     "        fresh, errors = load_all(self.settings.profiles, REPO_ROOT)\n"
+     "        from .profiles import load_custom  # wb-custom: user-added profiles live in STATE_DIR\n"
+     "        custom, cerrors = load_custom(self.settings.state_dir, fresh)\n"
+     "        fresh.update(custom)\n        errors.update(cerrors)\n"),
+]
+
+TEST_CUSTOM = r'''"""wb-custom: /_gate/custom-profiles (written by gate-ai.py)."""
+from gate.profiles import load_custom
+
+GOOD = """id: custom-tiny-llm
+title: Tiny LLM
+accelerator: L4
+comfyui: {repo: https://github.com/comfyanonymous/ComfyUI, commit: 2c75dc1b}
+models:
+- {id: m, dest: llm/tiny.gguf, url: hf://o/r/tiny.gguf, license: mit, size_gb: 1.0}
+ai: {type: llm, title: Tiny, llm: {model: m, name: custom-tiny-llm, ctx: 8192}}
+"""
+
+
+async def test_custom_profiles_crud(tmp_path):
+    from tests.test_app import client
+    from gate.app import SESSION
+
+    c, app = await client(tmp_path)
+    try:
+        r = await c.get("/_gate/custom-profiles")
+        assert r.status == 200 and (await r.json())["items"] == []
+        r = await c.post("/_gate/custom-profiles", json={"yaml": GOOD})
+        assert r.status == 200, await r.text()
+        assert (await r.json())["profile"]["ai"]["type"] == "llm"
+        assert (tmp_path / "custom_profiles/custom-tiny-llm/profile.yaml").is_file()
+        r = await c.get("/_gate/profiles")
+        assert "custom-tiny-llm" in [p["id"] for p in (await r.json())["profiles"]]
+        items = (await (await c.get("/_gate/custom-profiles")).json())["items"]
+        assert [i["id"] for i in items] == ["custom-tiny-llm"] and items[0]["yaml"] == GOOD
+        # what a gate restart / reload sees
+        assert set(load_custom(str(tmp_path), {"tiny"})[0]) == {"custom-tiny-llm"}
+        app[SESSION].reload_profiles()
+        assert "custom-tiny-llm" in app[SESSION].profiles
+        # rejected: built-in id, missing prefix, credentials, bad dest, too large, not YAML
+        for bad in (GOOD.replace("custom-tiny-llm", "tiny"), GOOD.replace("id: custom-tiny-llm", "id: tiny2"),
+                    GOOD.replace("license: mit", "token: abc"), GOOD.replace("llm/tiny.gguf", "../x.gguf"),
+                    GOOD + "#" * 70000, "id: [", ""):
+            r = await c.post("/_gate/custom-profiles", json={"yaml": bad})
+            assert r.status in (400, 413), bad[:60]
+        # in use -> 409; asleep -> deleted
+        s = app[SESSION]
+        r = await c.post("/_gate/wake", json={"profile": "custom-tiny-llm"})
+        assert r.status == 202
+        r = await c.delete("/_gate/custom-profiles/custom-tiny-llm")
+        assert r.status == 409
+        await s.stop("test")
+        r = await c.delete("/_gate/custom-profiles/custom-tiny-llm")
+        assert r.status == 200 and "custom-tiny-llm" not in s.profiles
+        assert (await c.delete("/_gate/custom-profiles/tiny")).status == 404
+    finally:
+        await c.close()
+
+
+async def test_custom_profiles_owner_only(tmp_path):
+    from tests.test_app import client
+
+    c, _ = await client(tmp_path, OWNER_EMAILS="boss@example.com")
+    try:
+        assert (await c.get("/_gate/custom-profiles")).status == 403
+        assert (await c.post("/_gate/custom-profiles", json={"yaml": GOOD})).status == 403
+    finally:
+        await c.close()
+'''
 
 MARKS = {"profiles": "def _parse_ai(", "plan": "# wb-ai", "setup": "def ai_prepare("}
 

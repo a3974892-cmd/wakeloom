@@ -1,0 +1,5 @@
+{
+ "_class_name": "StableDiffusionXLPipeline",
+ "_diffusers_version": "0.25.0",
+ "force_zeros_for_empty_prompt": true
+}
