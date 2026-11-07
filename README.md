@@ -5,6 +5,8 @@ A Windows desktop workbench that wakes a Colab GPU on demand and turns it into a
 
 [English](#english) · [下载](#下载) · [更新日志](CHANGELOG.md)
 
+维护资料：[项目交接](docs/PROJECT_HANDOFF.md) · [待办与验收](docs/ROADMAP.md) · [维护入口](AGENTS.md)
+
 > **第一次使用？看 [新手指南](docs/GETTING_STARTED.md)。** 软件第一次打开时也会自动带你走一遍：用 Google 账号登录，点三下就能开机。
 
 ---
