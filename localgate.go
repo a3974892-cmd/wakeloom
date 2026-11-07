@@ -112,6 +112,7 @@ func startLocalGate() {
 			r.Header.Del("Authorization")
 			r.Header.Del("Cookie")
 			r.Header.Del("Origin") // ComfyUI rejects cross-origin websockets
+			r.Header.Del(udSyncHeader)
 			q := r.URL.Query()
 			if q.Has("wbk") {
 				q.Del("wbk")
@@ -370,7 +371,8 @@ func (g *LocalGate) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		g.mu.Lock()
 		ready, tunnel := g.state == "ready", g.tunnel
-		if p != "/system_stats" && p != "/queue" { // the load panel's polling is not "use"
+		// the load panel's polling and the user-data backup (userdata.go) are not "use"
+		if p != "/system_stats" && p != "/queue" && r.Header.Get(udSyncHeader) == "" {
 			g.lastActivity = time.Now()
 		}
 		g.mu.Unlock()
@@ -806,6 +808,7 @@ func (g *LocalGate) loop() {
 		}
 		lastBeat = time.Now()
 		if started > 0 && nowF()-started > g.maxSession().Seconds() {
+			ud.beforeStop()
 			g.stop("达到最长会话时长，自动停机")
 			continue
 		}
@@ -814,6 +817,7 @@ func (g *LocalGate) loop() {
 			idle = 30 * time.Minute
 		}
 		if ws == 0 && store.pending() == 0 && time.Since(last) > idle {
+			ud.beforeStop()
 			g.stop(fmt.Sprintf("闲置 %d 分钟，自动停机", int(idle.Minutes())))
 			continue
 		}

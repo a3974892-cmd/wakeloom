@@ -24,6 +24,7 @@ func main() {
 	startLocalGate()
 	go cleanupOldExe()
 	go worker()
+	go ud.loop()
 
 	addr := "127.0.0.1:0"
 	if p := os.Getenv("CKWB_PORT"); p != "" {

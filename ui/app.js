@@ -255,8 +255,14 @@ async function wake() {
 }
 async function stopGate() {
   if (!confirm("确定停止并释放 GPU？正在跑的任务会中断。")) return;
-  try { await api("/api/gate/stop", { json: {} }); toast("已停止"); } catch (e) { toast("停止失败：" + e.message); }
-  pollStatus();
+  const btns = [$("#btnStop"), $("#btnStopTop")];
+  btns.forEach(b => { b.disabled = true; b.dataset.t = b.textContent; b.textContent = "备份工作流…"; });
+  try {
+    const r = await api("/api/gate/stop", { json: {} });
+    if (r && r.backup_warning) alert("已停止。" + r.backup_warning); else toast("已停止");
+  } catch (e) { toast("停止失败：" + e.message); }
+  finally { btns.forEach(b => { b.disabled = false; if (b.dataset.t) b.textContent = b.dataset.t; }); }
+  pollStatus(); if (typeof udRefresh === "function") udRefresh();
 }
 $("#btnWake").onclick = wake; $("#btnWakeTop").onclick = wake;
 $("#btnStop").onclick = stopGate; $("#btnStopTop").onclick = stopGate;
@@ -287,6 +293,7 @@ function fmtLine(line) {
   if ((m = line.match(/^KIT_TUNNEL (\{.*\})/))) return { cls: "ok", html: `<i>✓</i>隧道已建立<span class="m">${esc((JSON.parse(m[1]).url || "").replace(/^https?:\/\//, ""))}</span>` };
   if ((m = line.match(/^KIT_LIB boot extras (\[.*\])/))) { let a = []; try { a = JSON.parse(m[1]); } catch { } return { cls: "stage", html: `<i>›</i>本次顺便安装 ${a.length} 项（来自库）` }; }
   if ((m = line.match(/^KIT_LIB (.*)$/))) return { cls: "stage", html: `<i>›</i>${esc(m[1].replace("restarting ComfyUI to load new custom nodes", "重启 ComfyUI 以加载新插件").replace("ComfyUI restarted", "ComfyUI 已重启"))}` };
+  if ((m = line.match(/^WB_USERDATA (.*)$/))) return { cls: /失败/.test(m[1]) ? "bad" : "ok", html: `<i>${/失败/.test(m[1]) ? "!" : "✓"}</i>${esc(m[1])}` };
   if ((m = line.match(/^KIT_FETCHED (\{.*\})/))) return { cls: "ready", html: `<i>●</i>安装完成` };
   if (/error|traceback|failed|exception/i.test(line)) return { cls: "bad", html: esc(line) };
   return { cls: "dim", html: esc(line) };
