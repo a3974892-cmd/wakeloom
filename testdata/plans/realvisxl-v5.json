@@ -1,0 +1,59 @@
+{
+ "ai": {
+  "image": {
+   "arch": "sdxl",
+   "cfg": 5.0,
+   "checkpoint": "RealVisXL_V5.0_fp16.safetensors",
+   "height": 1216,
+   "model": "realvisxl-v5",
+   "negative": "bad hands, bad anatomy, ugly, deformed, (face asymmetry, eyes asymmetry, deformed eyes, deformed mouth, open mouth)",
+   "sampler": "dpmpp_sde",
+   "scheduler": "karras",
+   "shift": 1.0,
+   "steps": 30,
+   "width": 832
+  },
+  "models": [
+   "realvisxl-v5"
+  ],
+  "title": "RealVisXL V5.0",
+  "type": "image"
+ },
+ "comfyui": {
+  "args": [
+   "--preview-method",
+   "auto"
+  ],
+  "commit": "2c75dc1b",
+  "env": {},
+  "extra_model_paths": null,
+  "frontend_package": "comfyui-frontend-package==1.57.6",
+  "repo": "https://github.com/comfyanonymous/ComfyUI",
+  "settings": {}
+ },
+ "custom_nodes": [],
+ "default_view": "app",
+ "download_concurrency": 4,
+ "download_connections": 8,
+ "fast_start": true,
+ "max_session_hours": 7.0,
+ "model_aliases": {},
+ "model_store": "disk",
+ "models": [
+  {
+   "core": true,
+   "dest": "checkpoints/RealVisXL_V5.0_fp16.safetensors",
+   "id": "realvisxl-v5",
+   "sha256": null,
+   "size_gb": 6.94,
+   "url": "https://huggingface.co/SG161222/RealVisXL_V5.0/resolve/main/RealVisXL_V5.0_fp16.safetensors"
+  }
+ ],
+ "on_demand": {},
+ "pip_installer": "uv",
+ "profile": "realvisxl-v5",
+ "smoke": null,
+ "watchdog_gate_lost_min": 20,
+ "workflows": [],
+ "xet_high_performance": true
+}

@@ -1,0 +1,55 @@
+{
+ "ai": {
+  "llm": {
+   "ctx": 32768,
+   "dest": "llm/Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf",
+   "model": "qwen38-27b-q8",
+   "name": "qwen3.8-27b",
+   "system": "",
+   "temperature": 0.7,
+   "think": false
+  },
+  "models": [
+   "qwen38-27b-q8"
+  ],
+  "title": "Qwen3.8 27B abliterated",
+  "type": "llm"
+ },
+ "comfyui": {
+  "args": [
+   "--preview-method",
+   "auto"
+  ],
+  "commit": "2c75dc1b",
+  "env": {},
+  "extra_model_paths": null,
+  "frontend_package": "comfyui-frontend-package==1.57.6",
+  "repo": "https://github.com/comfyanonymous/ComfyUI",
+  "settings": {}
+ },
+ "custom_nodes": [],
+ "default_view": "app",
+ "download_concurrency": 4,
+ "download_connections": 8,
+ "fast_start": true,
+ "max_session_hours": 7.0,
+ "model_aliases": {},
+ "model_store": "disk",
+ "models": [
+  {
+   "core": true,
+   "dest": "llm/Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf",
+   "id": "qwen38-27b-q8",
+   "sha256": null,
+   "size_gb": 29.05,
+   "url": "https://huggingface.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF/resolve/main/Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf"
+  }
+ ],
+ "on_demand": {},
+ "pip_installer": "uv",
+ "profile": "qwen38-27b-chat",
+ "smoke": null,
+ "watchdog_gate_lost_min": 20,
+ "workflows": [],
+ "xet_high_performance": true
+}

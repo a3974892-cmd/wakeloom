@@ -1,0 +1,96 @@
+{
+ "ai": null,
+ "comfyui": {
+  "args": [
+   "--preview-method",
+   "auto"
+  ],
+  "commit": "bc5f880",
+  "env": {},
+  "extra_model_paths": null,
+  "frontend_package": "comfyui-frontend-package==1.57.1",
+  "repo": "https://github.com/comfyanonymous/ComfyUI",
+  "settings": {}
+ },
+ "custom_nodes": [],
+ "default_view": "app",
+ "download_concurrency": 4,
+ "download_connections": 8,
+ "fast_start": true,
+ "max_session_hours": 7.0,
+ "model_aliases": {},
+ "model_store": "disk",
+ "models": [
+  {
+   "core": true,
+   "dest": "checkpoints/sd3.5_large_fp8_scaled.safetensors",
+   "id": "sd35l-fp8",
+   "sha256": "5ad94d6f951556b1ab6b75930fd4effbafaf3130fe9df440e7f2d05a220dd1be",
+   "size_gb": 14.93,
+   "url": "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/sd3.5_large_fp8_scaled.safetensors"
+  }
+ ],
+ "on_demand": {
+  "sd35l-turbox": [
+   "clip-g",
+   "clip-l",
+   "t5-fp8",
+   "turbox-8step"
+  ]
+ },
+ "pip_installer": "uv",
+ "profile": "sd-latest",
+ "smoke": null,
+ "watchdog_gate_lost_min": 20,
+ "workflows": [
+  {
+   "app_inputs": [
+    [
+     16,
+     "text"
+    ],
+    [
+     40,
+     "text"
+    ]
+   ],
+   "app_outputs": [
+    9
+   ],
+   "default": true,
+   "format": "json",
+   "id": "sd35-large",
+   "inline": "sha256:22636f8ea8d35f41ecf92917112e14376bc30ae2c01de0b9553493cf2c176619",
+   "loras": [],
+   "overrides": [],
+   "title": "Quality · SD 3.5 Large fp8 (official, 20 steps)",
+   "url": null
+  },
+  {
+   "app_inputs": [
+    [
+     2,
+     "text"
+    ]
+   ],
+   "app_outputs": [
+    11
+   ],
+   "default": false,
+   "format": "json",
+   "id": "sd35l-turbox",
+   "inline": null,
+   "loras": [],
+   "overrides": [
+    {
+     "node": 1,
+     "value": "sd3.5_large_fp8_scaled.safetensors",
+     "widget_index": 0
+    }
+   ],
+   "title": "Fast · SD 3.5 Large TurboX 8-step (Tensor.Art)",
+   "url": "https://huggingface.co/tensorart/stable-diffusion-3.5-large-TurboX/resolve/main/contrast_sd3.5L_TurboX_turbo_diff_cfg.json"
+  }
+ ],
+ "xet_high_performance": true
+}

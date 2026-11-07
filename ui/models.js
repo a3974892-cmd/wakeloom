@@ -5,18 +5,20 @@
 
 const CM = { items: [], err: "", outdated: false, loaded: false };
 const CM_KINDS = [["llm", "对话大模型"], ["sdxl", "SDXL 检查点"], ["chroma", "Chroma 生图"], ["comfy", "ComfyUI 模型"]];
-const CM_KIND_CN = Object.fromEntries(CM_KINDS);
+const CM_KIND_CN = { ...Object.fromEntries(CM_KINDS), llm_unsupported: "对话模型（非 GGUF，不支持）", unknown: "未识别" };
 const CM_GPUS = ["T4", "L4", "G4", "A100", "H100"];
 const CM_ROLE_CN = { model: "主模型", clip: "T5 文本编码器", vae: "VAE", extra: "文件" };
 const CM_NOTICE = "模型来自第三方，请遵守其许可证和当地法律。";
 let CM_DIRS = ["checkpoints", "diffusion_models", "unet", "text_encoders", "clip", "vae", "loras", "upscale_models", "controlnet", "clip_vision", "embeddings"];
 
 // same rule as the Go side: size × 1.2 + 2 GB; L4 (24 GB) up to 20, G4 (96 GB) up to 80, else H100
+// same rule as recommendGPU() in custom_models.go: size × 1.2 + 2 GB picks L4 / G4; size × 1.2 above 96 GB
+// (G4, the biggest Colab GPU) cannot run at all
 function cmGPU(totalGB) {
   const need = Math.round((totalGB * 1.2 + 2) * 10) / 10;
+  if (totalGB * 1.2 > 96) return { gpu: "", need, blocked: true, note: `这个模型约 ${Math.ceil(totalGB * 1.2)} GB，超过 Colab 最大显存 96 GB，无法运行` };
   if (need <= 20) return { gpu: "L4", need, note: "" };
-  if (need <= 80) return { gpu: "G4", need, note: "" };
-  return { gpu: "H100", need, note: "可能放不下，建议选更小的量化" };
+  return { gpu: "G4", need, note: `约需 ${Math.round(need)} GB 显存，L4（24 GB）放不下，所以用 G4（96 GB）` };
 }
 const cmGB = n => (Math.round(n * 100) / 100).toFixed(2).replace(/\.?0+$/, "") + " GB";
 const cmBase = p => p.split("/").pop();
@@ -41,6 +43,7 @@ async function loadCustomModels() {
   }
   CM.loaded = true;
   cmRenderSettings();
+  if (typeof AI !== "undefined") { AI.key = ""; if (page === "ai") aiPickRender(); }
 }
 
 // ---- settings: list / edit / delete ----
@@ -53,7 +56,7 @@ function cmRenderSettings() {
     return `<div class="cm-row">
       <span class="pill sm ${s.kind === "llm" ? "llm" : s.kind === "comfy" ? "" : "img"}">${esc(CM_KIND_CN[s.kind] || s.kind)}</span>
       <div class="grow"><b>${esc(it.title)}</b><div class="muted small mono">${esc(it.id)} · ${esc(s.gpu || "")} · 约 ${cmGB(size)}${s.template ? " · 已关联模板" : ""}</div>
-        ${it.error ? `<p class="err">${esc(it.error)}</p>` : ""}</div>
+        ${it.problem ? `<p class="err">无法使用：${esc(it.problem)}</p>` : it.error ? `<p class="err">${esc(it.error)}</p>` : ""}</div>
       <button type="button" class="btn xs" data-cmedit="${esc(it.id)}">编辑</button>
       <button type="button" class="btn ghost xs" data-cmdel="${esc(it.id)}">删除</button></div>`;
   }).join("");
@@ -148,9 +151,10 @@ function cmFilePicker() {
   const r = CF.r, cands = cmCands(CF.kind, r.all_files || r.files || []);
   if (!cands.length) return `<p class="err">这个仓库里没有适合「${CM_KIND_CN[CF.kind]}」的文件${CF.kind === "llm" ? "（需要单文件 GGUF）" : CF.kind !== "comfy" ? "（需要放在仓库根目录、大于 1 GB 的单文件检查点）" : ""}，换个类型试试。</p>`;
   if (!cands.some(f => f.path === CF.sel[CF.kind])) CF.sel[CF.kind] = cands[0].path;
-  const tip = f => { const g = cmGPU(f.size_gb + (CF.kind === "chroma" ? cmExtrasGB() : 0)); return `需 ${g.need} GB · ${g.gpu}`; };
-  return `<div class="cm-files">` + cands.map(f => `<label class="cm-file ${f.path === CF.sel[CF.kind] ? "on" : ""}">
-      <input type="radio" name="cmFile" value="${esc(f.path)}" ${f.path === CF.sel[CF.kind] ? "checked" : ""}>
+  const fit = f => cmGPU(f.size_gb + (CF.kind === "chroma" ? cmExtrasGB() : 0));
+  const tip = f => { const g = fit(f); return g.blocked ? `<span class="warn-text">放不下</span>` : `需 ${g.need} GB · ${g.gpu}`; };
+  return `<div class="cm-files">` + cands.map(f => `<label class="cm-file ${f.path === CF.sel[CF.kind] ? "on" : ""} ${fit(f).blocked ? "off" : ""}">
+      <input type="radio" name="cmFile" value="${esc(f.path)}" ${f.path === CF.sel[CF.kind] ? "checked" : ""} ${fit(f).blocked && f.path !== CF.sel[CF.kind] ? "disabled" : ""}>
       <span class="grow mono">${esc(f.path)}</span>${f.quant ? `<span class="pill sm">${esc(f.quant)}</span>` : ""}
       <span class="muted small mono">${cmGB(f.size_gb)}</span><span class="muted small">${tip(f)}</span></label>`).join("") + `</div>`;
 }
@@ -169,15 +173,43 @@ function cmRowsHTML() {
     `<button class="btn xs" id="cmRowAdd">＋ 添加文件</button></div>`;
 }
 
+// a transformers chat model: explain, and offer the GGUF versions found on Hugging Face
+function cmUnsupportedHTML(r) {
+  const repos = r.gguf_repos || [];
+  const list = repos.length ? `<div class="cm-files">` + repos.map(a => `<div class="cm-file ${a.fits ? "" : "off"}">
+      <span class="grow mono">${esc(a.repo)}</span>
+      ${a.min_gb ? `<span class="muted small">最小 ${esc(a.min_quant || "?")} ${cmGB(a.min_gb)} · 最大 ${esc(a.max_quant || "?")} ${cmGB(a.max_gb)}</span>` : `<span class="muted small">没找到单文件量化</span>`}
+      ${a.fits ? "" : `<span class="warn-text small">都放不下</span>`}
+      <button type="button" class="btn xs" data-retry="${esc(a.link)}">改用这个仓库</button></div>`).join("") + `</div>`
+    : `<p class="muted small">${esc(r.search_error || "Hugging Face 上没搜到同名的 GGUF 版本。")}</p>`;
+  return `<p class="warn-note">${esc(r.blocked)}${r.total_gb ? `<br>这个仓库的权重共约 ${cmGB(r.total_gb)}。` : ""}</p>
+    <div class="fld"><span>找到的 GGUF 版本</span>${list}</div>`;
+}
+
 function cmRenderForm() {
   const r = CF.r, kind = CF.kind;
+  if (kind === "llm_unsupported") {
+    $("#cmBody").innerHTML = `<div class="cm-head"><a href="#" class="mono" id="cmRepo">${esc(r.repo)}</a>
+      ${r.license ? `<span class="pill sm">许可证 ${esc(r.license)}</span>` : ""}<span class="pill sm warn">${CM_KIND_CN[kind]}</span></div>
+      ${cmUnsupportedHTML(r)}<div class="row end"><button class="btn" data-close>关闭</button></div>`;
+    $$("[data-close]").forEach(b => b.onclick = closeModal);
+    $("#cmRepo").onclick = e => { e.preventDefault(); api("/api/open-url", { json: { url: r.link } }).catch(() => window.open(r.link)); };
+    $$("[data-retry]").forEach(b => b.onclick = () => { $("#cmUrl").value = b.dataset.retry; $("#cmGo").click(); });
+    return;
+  }
   if (kind === "comfy" && !CF.rows) {
     const sel = new Set(r.selected || []);
     CF.rows = (r.all_files || r.files || []).map(f => ({ role: "extra", url: cmHF(r.repo, r.rev, f.path), dir: f.dir, size_gb: f.size_gb, license: r.license, on: sel.size ? sel.has(f.path) : (r.all_files || []).length <= 3 }));
   }
   const total = cmTotalGB(), g = cmGPU(total);
-  if (!CF.gpuTouched) CF.gpu = g.gpu;
-  const tplOpts = `<option value="">不关联</option>` + (templates || []).map(t => `<option value="${esc(t.id)}" ${t.id === CF.template ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+  if (!CF.gpuTouched || g.gpu === "G4" && CF.gpu === "L4") CF.gpu = g.gpu || "G4"; // never leave a too-small GPU selected
+  const tpls = templates || [];
+  const tplOpts = `<option value="">${tpls.length ? "请选择模板" : "还没有模板"}</option>` + tpls.map(t => `<option value="${esc(t.id)}" ${t.id === CF.template ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+  let why = "";
+  if (kind === "unknown") why = "没认出这是什么模型：请先在上面选择类型。";
+  else if (g.blocked) why = g.note + "，不能保存。" + (kind === "llm" ? "请换一个更小的量化版本。" : "");
+  else if (kind === "comfy" && !(CF.rows || []).some(f => f.on && f.url)) why = "至少选一个文件。";
+  else if (kind === "comfy" && !CF.template) why = tpls.length ? "请选择关联的模板：这种配置唤醒后要在「生成」页用它。" : "这种配置需要关联一个「生成」页的模板。请先到「生成」页导入 ComfyUI API 工作流，再回来保存。";
   const showRows = kind === "comfy" || CF.edit;
   $("#cmBody").innerHTML = `
     ${CF.edit ? "" : `<div class="cm-head">
@@ -186,8 +218,8 @@ function cmRenderForm() {
       <span class="muted small">${esc(r.kind_reason || "")}</span></div>
       ${r.gated ? `<p class="warn-note">${esc(r.gated_note || "需要 Hugging Face 令牌")}</p>` : ""}`}
     <div class="fld"><span>类型</span><div class="seg" id="cmKind">${CM_KINDS.map(([k, n]) => `<button type="button" data-k="${k}" class="${k === kind ? "on" : ""}" ${CF.edit && k !== kind ? "disabled" : ""}>${n}</button>`).join("")}</div></div>
-    ${kind === "comfy" ? `<p class="hint" style="margin-top:-6px">这种配置不出现在 AI 页：唤醒后在「生成」页用 ComfyUI 工作流（API 格式模板）调用这些文件。</p>` : ""}
-    ${showRows ? cmRowsHTML() : `<div class="fld"><span>${kind === "llm" ? "量化版本" : "模型文件"}</span>${cmFilePicker()}</div>`}
+    ${kind === "comfy" ? `<p class="hint" style="margin-top:-6px">在 AI 页显示为「通用」卡片：唤醒后在「生成」页用关联的模板（ComfyUI API 工作流）调用这些文件。勾选的文件每次开机都会下载。</p>` : ""}
+    ${kind === "unknown" ? "" : showRows ? cmRowsHTML() : `<div class="fld"><span>${kind === "llm" ? "量化版本" : "模型文件"}</span>${cmFilePicker()}</div>`}
     ${kind === "chroma" && !CF.edit ? `<details class="sub cm-extras"><summary>T5 与 VAE（默认复用内置 Chroma1-HD 的文件）</summary>
         ${CF.extras.map((x, i) => `<label class="fld">${CM_ROLE_CN[x.role]}<input class="mono" data-xi="${i}" value="${esc(x.url)}"></label>`).join("")}</details>` : ""}
     <div class="row gap wrap cm-grid">
@@ -195,10 +227,13 @@ function cmRenderForm() {
       <label class="fld narrow">GPU<select id="cmGpu">${CM_GPUS.map(x => `<option ${x === CF.gpu ? "selected" : ""}>${x}</option>`).join("")}</select></label>
       ${kind === "comfy" ? `<label class="fld narrow">关联模板<select id="cmTpl">${tplOpts}</select></label>` : ""}
     </div>
-    <p class="hint cm-gpu" style="margin-top:-6px">共约 <b>${cmGB(total)}</b>，估计需要显存 ${g.need} GB → 推荐 <b>${g.gpu}</b>${g.note ? `<span class="warn-text">（${g.note}）</span>` : ""}${CF.gpu !== g.gpu ? ` · 你选了 ${CF.gpu}` : ""}</p>
-    ${kind !== "comfy" ? `<div class="sec-h sub"><b>主要参数</b><span class="d">之后在 AI 页也能临时改</span></div>${cmParamsHTML(kind, CF.params[kind] || (CF.params[kind] = cmDefaults(kind)))}` : ""}
+    ${kind === "unknown" ? "" : `<p class="hint cm-gpu" style="margin-top:-6px">共约 <b>${cmGB(total)}</b>，估计需要显存 ${g.need} GB → ${g.blocked ? `<span class="warn-text">${esc(g.note)}</span>` : `推荐 <b>${g.gpu}</b>${g.note ? `<span class="muted">（${esc(g.note)}）</span>` : ""}${CF.gpu !== g.gpu ? ` · 你选了 ${CF.gpu}` : ""}`}</p>`}
+    ${why ? `<p class="warn-note">${esc(why)}${kind === "comfy" && !tpls.length ? ` <a href="#" id="cmGoGen">去「生成」页 →</a>` : ""}</p>` : ""}
+    ${kind !== "comfy" && kind !== "unknown" ? `<div class="sec-h sub"><b>主要参数</b><span class="d">之后在 AI 页也能临时改</span></div>${cmParamsHTML(kind, CF.params[kind] || (CF.params[kind] = cmDefaults(kind)))}` : ""}
     <p class="err" id="cmErr"></p>
-    <div class="row end"><button class="btn" data-close>取消</button><button class="btn primary" id="cmSave">${CF.edit ? "保存修改" : "保存为启动配置"}</button></div>`;
+    <div class="row end"><button class="btn" data-close>取消</button><button class="btn primary" id="cmSave" ${why ? "disabled" : ""}>${CF.edit ? "保存修改" : "保存为启动配置"}</button></div>`;
+  const gg = $("#cmGoGen"); if (gg) gg.onclick = e => { e.preventDefault(); closeModal(); show("gen"); };
+  const ts = $("#cmTpl"); if (ts) ts.onchange = () => { cmSync(); cmRenderForm(); };
   $$("[data-close]").forEach(b => b.onclick = closeModal);
   const repo = $("#cmRepo"); if (repo) repo.onclick = e => { e.preventDefault(); api("/api/open-url", { json: { url: r.link } }).catch(() => window.open(r.link)); };
   $$("#cmKind button").forEach(b => b.onclick = () => { if (b.disabled) return; cmSync(); CF.kind = b.dataset.k; cmRenderForm(); });

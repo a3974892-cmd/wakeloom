@@ -37,6 +37,13 @@ def build_plan(profile: Profile, settings: Settings, workflow_ids: list[str] | N
         models.setdefault(m.id, m)
     default_core = set(m.id for m in profile.models_for([profile.app_default])) if profile.app_default else set()
     default_core |= {m.id for m in ai_models}
+    # wb-core: `core: true` models that no workflow / smoke test / ai block uses (user-added "any model"
+    # profiles) are downloaded on every wake too; models a workflow uses keep that workflow's rules
+    used = {mid for w in profile.workflows.values() for mid in w.models}
+    used |= set(profile.smoke.models if profile.smoke else ()) | {m.id for m in ai_models}
+    for m in profile.models.values():
+        if m.core and m.id not in used:
+            models.setdefault(m.id, m)
     return {
         "profile": profile.id,
         "comfyui": {

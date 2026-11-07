@@ -1,0 +1,26 @@
+{
+ "_id": "x",
+ "id": "moonshotai/Kimi-K3.1-Pro",
+ "private": false,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "library_name": "transformers",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "kimi_k3",
+  "text-generation",
+  "conversational",
+  "custom_code",
+  "license:other",
+  "region:us"
+ ],
+ "cardData": {
+  "license": "other",
+  "license_name": "modified-mit",
+  "library_name": "transformers"
+ },
+ "safetensors": {
+  "total": 2780000000000
+ }
+}

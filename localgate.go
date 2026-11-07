@@ -880,6 +880,7 @@ type LocalProfile struct {
 		ID     string  `yaml:"id"`
 		Dest   string  `yaml:"dest"`
 		SizeGB float64 `yaml:"size_gb"`
+		Core   bool    `yaml:"core"`
 	} `yaml:"models"`
 	AI        map[string]any `yaml:"ai"`
 	Workflows []struct {
@@ -979,6 +980,17 @@ func localProfilesSummary() map[string]any {
 			aiV = ai
 			for _, m := range ai["models"].([]string) {
 				wake[m] = true
+			}
+		}
+		used := map[string]bool{} // core models no workflow uses are downloaded on every wake (plan.py wb-core)
+		for _, w := range p.Workflows {
+			for _, m := range w.Models {
+				used[m] = true
+			}
+		}
+		for _, m := range p.Models {
+			if m.Core && !used[m.ID] && !wake[m.ID] {
+				wake[m.ID] = true
 			}
 		}
 		wfs := []map[string]any{}

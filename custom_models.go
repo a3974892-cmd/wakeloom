@@ -281,6 +281,22 @@ type InspectResult struct {
 	ModelDirs   []string       `json:"model_dirs"`
 	PipelineTag string         `json:"pipeline_tag,omitempty"`
 	Notice      string         `json:"notice"`
+	Blocked     string         `json:"blocked,omitempty"`      // why this cannot be saved as it is
+	Smaller     []hfFile       `json:"smaller,omitempty"`      // quantisations of this repo that do fit
+	TotalGB     float64        `json:"total_gb,omitempty"`     // llm_unsupported: size of the weights
+	GGUFRepos   []ggufAlt      `json:"gguf_repos,omitempty"`   // llm_unsupported: GGUF versions found on HF
+	SearchError string         `json:"search_error,omitempty"` // the GGUF search failed (shown, not fatal)
+}
+
+// ggufAlt is a GGUF repository found for a non-GGUF chat model.
+type ggufAlt struct {
+	Repo     string  `json:"repo"`
+	Link     string  `json:"link"`
+	MinQuant string  `json:"min_quant,omitempty"`
+	MinGB    float64 `json:"min_gb,omitempty"`
+	MaxQuant string  `json:"max_quant,omitempty"`
+	MaxGB    float64 `json:"max_gb,omitempty"`
+	Fits     bool    `json:"fits"` // the smallest quantisation fits the biggest GPU
 }
 
 var (
@@ -352,15 +368,24 @@ func guessDir(p string, tags []string) string {
 }
 
 // recommendGPU: need = size × 1.2 + 2 GB headroom; L4 = 24 GB, G4 = 96 GB, H100 = 80 GB (but faster / last resort).
+// maxVRAMGB is the biggest GPU Colab offers here (G4); customMaxGB is what a profile may download in total.
+const (
+	maxVRAMGB   = 96.0
+	customMaxGB = maxVRAMGB * 0.9
+)
+
+// recommendGPU: estimated VRAM = size × 1.2 + 2 GB headroom picks L4 (24 GB) or G4 (96 GB); a model whose
+// size × 1.2 is above 96 GB cannot run at all (gpu == "", note says why).
 func recommendGPU(totalGB float64) (gpu string, need float64, note string) {
 	need = math.Round((totalGB*1.2+2)*10) / 10
+	hard := totalGB * 1.2
 	switch {
+	case hard > maxVRAMGB:
+		return "", need, fmt.Sprintf("这个模型约 %.0f GB，超过 Colab 最大显存 96 GB，无法运行", math.Ceil(hard))
 	case need <= 20:
 		return "L4", need, ""
-	case need <= 80:
-		return "G4", need, ""
 	}
-	return "H100", need, "可能放不下，建议选更小的量化"
+	return "G4", need, fmt.Sprintf("估计需要约 %.0f GB 显存，L4（24 GB）放不下，所以用 G4（96 GB）", need)
 }
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
@@ -433,6 +458,9 @@ func classify(m *hfModelInfo, files []hfFile, modelIndex string) (kind, reason s
 			r += "（架构 " + arch + "）"
 		}
 		return "llm", r + "，按对话大模型处理（Ollama）"
+	case nGGUF == 0 && (m.PipelineTag == "text-generation" || m.PipelineTag == "image-text-to-text") &&
+		(strings.EqualFold(m.LibraryName, "transformers") || hasTag(m.Tags, "transformers")):
+		return "llm_unsupported", "这是 transformers 格式的对话模型。Wakeloom 用 Ollama 运行对话模型，只支持 GGUF 格式。"
 	case lora:
 		return "comfy", "这是 LoRA，按「任意 ComfyUI 模型」处理（放到 loras/）"
 	case strings.Contains(modelIndex, "ChromaPipeline") || hasTag(m.Tags, "chroma") || strings.Contains(strings.ToLower(m.ID), "chroma") && tagContains(m.Tags, "flux.1-schnell"):
@@ -445,7 +473,7 @@ func classify(m *hfModelInfo, files []hfFile, modelIndex string) (kind, reason s
 	if strings.Contains(modelIndex, "FluxPipeline") || tagContains(m.Tags, "flux") {
 		return "comfy", "FLUX 原版结构和 Chroma 不同，按「任意 ComfyUI 模型」处理，需要配工作流"
 	}
-	return "comfy", "没认出固定类型，按「任意 ComfyUI 模型」处理：选好文件和存放目录，唤醒后在「生成」页用工作流"
+	return "unknown", "没认出这是什么模型，请先选择类型；选「ComfyUI 模型」时至少选一个文件，并关联一个「生成」页的模板"
 }
 
 // candidates returns the weight files relevant for a kind, best first, plus the default selection.
@@ -480,19 +508,26 @@ func candidates(kind string, files []hfFile, focus string) ([]hfFile, []string) 
 		switch kind {
 		case "llm":
 			var q8, q4km, q4 string
+			fits := []hfFile{}
 			for _, f := range out {
+				if g, _, _ := recommendGPU(f.SizeGB); g != "" {
+					fits = append(fits, f)
+				}
+			}
+			if len(fits) == 0 {
+				fits = out[:1] // nothing fits: show the smallest; buildInspect blocks saving
+			}
+			for _, f := range fits {
 				switch {
 				case f.Quant == "Q8_0":
-					if need := f.SizeGB*1.2 + 2; need <= 80 { // "显存够": fits a single big GPU
-						q8 = f.Path
-					}
+					q8 = f.Path
 				case f.Quant == "Q4_K_M":
 					q4km = f.Path
 				case strings.HasPrefix(f.Quant, "Q4") && q4 == "":
 					q4 = f.Path
 				}
 			}
-			pick = firstNonEmpty(q4km, firstNonEmpty(q4, out[0].Path))
+			pick = firstNonEmpty(q4km, firstNonEmpty(q4, fits[len(fits)-1].Path)) // else the biggest that fits
 			// Q8_0 when it still fits the GPU the Q4 file would get anyway (no extra cost, better quality)
 			if q8 != "" {
 				g8, _, _ := recommendGPU(sizeOfPath(out, q8))
@@ -585,7 +620,16 @@ func inspectHF(ctx context.Context, link string) (*InspectResult, error) {
 	if len(files) == 0 {
 		return nil, errors.New("这个仓库里没有模型文件（.safetensors / .gguf / .ckpt 等）")
 	}
-	return buildInspect(ref, m, files, modelIndex)
+	res, err := buildInspect(ref, m, files, modelIndex)
+	if err == nil && res.Kind == "llm_unsupported" {
+		name := strings.TrimSuffix(path.Base(ref.Repo), "-Instruct")
+		if alts, err := hfGGUFSearch(ctx, name); err != nil {
+			res.SearchError = "没能搜索 GGUF 版本：" + err.Error()
+		} else {
+			res.GGUFRepos = alts
+		}
+	}
+	return res, err
 }
 
 // buildInspect is the offline part of inspectHF (unit-tested with recorded API JSON).
@@ -595,7 +639,7 @@ func buildInspect(ref hfRef, m *hfModelInfo, files []hfFile, modelIndex string) 
 		ref.Path = ""
 	}
 	cands, sel := candidates(kind, files, ref.Path)
-	if len(cands) == 0 && kind != "comfy" {
+	if len(cands) == 0 && (kind == "llm" || kind == "sdxl" || kind == "chroma") {
 		if kind == "llm" {
 			return nil, errors.New("只找到分片的 GGUF（-00001-of-0000N），Ollama 暂不支持，请换一个单文件的量化版本")
 		}
@@ -654,8 +698,76 @@ func buildInspect(ref hfRef, m *hfModelInfo, files []hfFile, modelIndex string) 
 	default:
 		res.Params = map[string]any{}
 	}
+	if kind == "llm_unsupported" {
+		for _, f := range files {
+			res.TotalGB += f.SizeGB
+		}
+		res.TotalGB = math.Round(res.TotalGB*10) / 10
+		res.Blocked = "Wakeloom 用 Ollama 运行对话模型，只支持 GGUF 格式。可以改用下面找到的 GGUF 版本。"
+		res.Selected = []string{}
+		res.Params = map[string]any{}
+		return res, nil
+	}
 	res.GPU, res.NeedGB, res.GPUNote = recommendGPU(total)
+	if res.GPU == "" {
+		res.Blocked = res.GPUNote
+		for _, f := range cands {
+			if g, _, _ := recommendGPU(f.SizeGB); g != "" && (kind == "llm" || kind == "sdxl" || kind == "chroma") {
+				res.Smaller = append(res.Smaller, f)
+			}
+		}
+		if len(res.Smaller) > 0 {
+			res.Blocked += "。可以改选下面放得下的较小版本"
+		}
+		res.GPU = "G4"
+	}
 	return res, nil
+}
+
+// hfGGUFSearch looks for GGUF versions of a model: GET /api/models?search=<name>&filter=gguf, then the
+// smallest / biggest single-file quantisation of the first few hits.
+func hfGGUFSearch(ctx context.Context, name string) ([]ggufAlt, error) {
+	q := url.Values{"search": {name}, "filter": {"gguf"}, "sort": {"downloads"}, "limit": {"5"}}
+	b, _, err := hfGet(ctx, hfAPIBase+"/api/models?"+q.Encode(), 4<<20)
+	if err != nil {
+		return nil, err
+	}
+	var hits []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(b, &hits); err != nil {
+		return nil, errors.New("Hugging Face 搜索结果看不懂")
+	}
+	out := []ggufAlt{}
+	for i, h := range hits {
+		if i >= 3 || !strings.Contains(h.ID, "/") {
+			break
+		}
+		a := ggufAlt{Repo: h.ID, Link: hfBase + "/" + h.ID}
+		if tree, err := hfTree(ctx, hfRef{Repo: h.ID}); err == nil {
+			for _, e := range tree {
+				l := strings.ToLower(e.Path)
+				if e.Type != "file" || !strings.HasSuffix(l, ".gguf") || strings.Contains(l, "mmproj") || shardRE.MatchString(l) {
+					continue
+				}
+				size := e.Size
+				if e.LFS != nil && e.LFS.Size > 0 {
+					size = e.LFS.Size
+				}
+				g := gb(size)
+				if a.MinGB == 0 || g < a.MinGB {
+					a.MinGB, a.MinQuant = g, ggufQuant(e.Path)
+				}
+				if g > a.MaxGB {
+					a.MaxGB, a.MaxQuant = g, ggufQuant(e.Path)
+				}
+			}
+			gpu, _, _ := recommendGPU(a.MinGB)
+			a.Fits = a.MinGB > 0 && gpu != ""
+		}
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 // ---------------- profile YAML ----------------
@@ -667,6 +779,14 @@ type pyModel struct {
 	URL     string  `yaml:"url"`
 	License string  `yaml:"license"`
 	SizeGB  float64 `yaml:"size_gb"`
+	Core    bool    `yaml:"core,omitempty"` // downloaded on every wake even though no workflow uses it
+}
+
+// pyEntry links an "any model" profile to the 生成-page template it is used with (wb_entry in profile.yaml;
+// the gate checks it exists, the template itself stays on this PC).
+type pyEntry struct {
+	Template string `yaml:"template"`
+	Name     string `yaml:"name,omitempty"`
 }
 type pyLLM struct {
 	Model       string  `yaml:"model" json:"model"`
@@ -709,8 +829,9 @@ type pyProfile struct {
 	Frontend    *struct {
 		Package string `yaml:"package"`
 	} `yaml:"frontend,omitempty"`
-	Models []pyModel `yaml:"models"`
-	AI     *pyAI     `yaml:"ai,omitempty"`
+	Models  []pyModel `yaml:"models"`
+	AI      *pyAI     `yaml:"ai,omitempty"`
+	WBEntry *pyEntry  `yaml:"wb_entry,omitempty"`
 }
 
 // builtinProfileYAML reads an embedded kit profile (the ComfyUI commit / frontend and Chroma's T5 + VAE come from there).
@@ -852,6 +973,22 @@ func buildProfile(s CustomSpec) ([]byte, string, error) {
 		}
 		p.AI = &pyAI{Type: "image", Title: title, Image: &im}
 	case "comfy":
+		for i := range p.Models {
+			p.Models[i].Core = true // nothing references them, so they must be core to be downloaded
+		}
+		tpl := strings.TrimSpace(s.Template)
+		if tpl == "" {
+			return nil, "", errors.New("「ComfyUI 模型」类型需要关联一个「生成」页的模板，唤醒后用它生成。还没有模板的话，先到「生成」页导入 ComfyUI API 工作流")
+		}
+		e := &pyEntry{Template: tpl}
+		if t, err := loadTemplate(tpl); err == nil {
+			e.Name = t.Name
+		}
+		p.WBEntry = e
+	case "", "unknown":
+		return nil, "", errors.New("请先选择类型")
+	case "llm_unsupported":
+		return nil, "", errors.New("Wakeloom 只支持 GGUF 格式的对话模型，请改用 GGUF 版本的仓库")
 	default:
 		return nil, "", errors.New("未知类型：" + s.Kind)
 	}
@@ -868,7 +1005,96 @@ func buildProfile(s CustomSpec) ([]byte, string, error) {
 	if _, err := validateProfileYAML(text); err != nil {
 		return nil, "", err
 	}
+	if why := customProblem(text, ""); why != "" {
+		return nil, "", errors.New(why)
+	}
 	return text, id, nil
+}
+
+// customProblem says why a user-added profile cannot be used ("" = fine). Same rules as custom_problem()
+// in the gate's profiles.py: something to download, something to use it with, and it must fit a GPU.
+// id (optional) also accepts a template linked on this PC (profiles saved before wb_entry existed).
+func customProblem(text []byte, id string) string {
+	if _, err := validateProfileYAML(text); err != nil {
+		return err.Error()
+	}
+	var p pyProfile
+	if err := yaml.Unmarshal(text, &p); err != nil {
+		return err.Error()
+	}
+	size := map[string]float64{}
+	for _, m := range p.Models {
+		size[m.ID] = m.SizeGB
+	}
+	used := map[string]bool{}
+	if p.AI != nil && p.AI.LLM != nil {
+		used[p.AI.LLM.Model] = true
+	}
+	if p.AI != nil && p.AI.Image != nil {
+		for _, m := range []string{p.AI.Image.Model, p.AI.Image.Clip, p.AI.Image.VAE} {
+			if m != "" {
+				used[m] = true
+			}
+		}
+	}
+	for _, m := range p.Models {
+		if m.Core {
+			used[m.ID] = true
+		}
+	}
+	if len(used) == 0 {
+		return "没有会被下载的模型文件（开机后什么都不会下载）"
+	}
+	hasEntry := p.WBEntry != nil && strings.TrimSpace(p.WBEntry.Template) != ""
+	if p.AI == nil && !hasEntry && (id == "" || templateFor(id) == "") {
+		return "没有可用的入口：不是 AI 配置，也没有关联「生成」页的模板"
+	}
+	total := 0.0
+	for m := range used {
+		total += size[m]
+	}
+	if total > customMaxGB {
+		return fmt.Sprintf("模型共约 %.0f GB，超过 Colab 最大 GPU 能放下的 %.1f GB", total, customMaxGB)
+	}
+	return ""
+}
+
+// customWakeProblem checks a custom profile right before waking with it ("" = go ahead, also when the
+// profile cannot be read: then the gate decides).
+func customWakeProblem(id string) string {
+	if !strings.HasPrefix(id, customPrefix) {
+		return ""
+	}
+	var text []byte
+	if localMode() {
+		b, err := os.ReadFile(filepath.Join(userProfilesDir(), id, "profile.yaml"))
+		if err != nil {
+			return ""
+		}
+		text = b
+	} else {
+		var out struct {
+			Items []struct {
+				ID   string `json:"id"`
+				YAML string `json:"yaml"`
+			} `json:"items"`
+		}
+		if customGate("GET", "", nil, &out) != nil {
+			return ""
+		}
+		for _, it := range out.Items {
+			if it.ID == id {
+				text = []byte(it.YAML)
+			}
+		}
+		if text == nil {
+			return ""
+		}
+	}
+	if why := customProblem(text, id); why != "" {
+		return "无法用「" + id + "」唤醒：" + why + "。请在「设置 → 自定义模型」里编辑或删除它"
+	}
+	return ""
 }
 
 // specFromYAML rebuilds the edit form from a saved profile.
@@ -878,6 +1104,9 @@ func specFromYAML(text []byte) (CustomSpec, error) {
 		return CustomSpec{}, err
 	}
 	s := CustomSpec{ID: p.ID, Title: p.Title, GPU: p.Accelerator, Kind: "comfy"}
+	if p.WBEntry != nil {
+		s.Template = p.WBEntry.Template
+	}
 	if i := strings.Index(string(text), " from https://huggingface.co/"); i >= 0 {
 		s.Source = strings.Fields(string(text)[i+6:])[0]
 	}
@@ -1284,6 +1513,9 @@ func localCustomSave(text string) (string, error) {
 	if builtinIDs()[pid] {
 		return "", fmt.Errorf("%s 是内置配置，不能覆盖", pid)
 	}
+	if why := customProblem([]byte(text), pid); why != "" {
+		return "", errors.New(why)
+	}
 	d := filepath.Join(userProfilesDir(), pid)
 	if err := os.MkdirAll(d, 0o755); err != nil {
 		return "", err
@@ -1429,8 +1661,11 @@ func registerCustomModelRoutes(api *http.ServeMux) {
 			if err != nil && e == "" {
 				e = err.Error()
 			}
-			s.Template = templateFor(it.ID)
-			items = append(items, map[string]any{"id": it.ID, "title": firstNonEmpty(s.Title, it.Title), "loaded": it.Loaded, "error": e, "spec": s})
+			if s.Template == "" {
+				s.Template = templateFor(it.ID)
+			}
+			items = append(items, map[string]any{"id": it.ID, "title": firstNonEmpty(s.Title, it.Title), "loaded": it.Loaded, "error": e,
+				"problem": customProblem([]byte(it.YAML), it.ID), "spec": s})
 		}
 		jsonOut(w, 200, map[string]any{"items": items, "mode": map[bool]string{true: "local", false: "gateway"}[localMode()]})
 	})

@@ -554,3 +554,8 @@ details.sub[open] summary::before { content: "− "; }
 /* imported prompt guide row (settings → 大模型 API) */
 .guide-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 12px 0 6px; border-top: 1px dashed var(--line2); font-size: 13px; }
 .guide-row .grow { flex: 1 1 320px; }
+.cm-file.off { opacity: .55; }
+.cm-file.off input { cursor: not-allowed; }
+.pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+.ai-card .err { margin: 6px 0 0; }
+.ai-card .tpl-link { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }

@@ -1,0 +1,353 @@
+{
+ "ai": null,
+ "comfyui": {
+  "args": [
+   "--preview-method",
+   "auto",
+   "--highvram",
+   "--reserve-vram",
+   "0.2"
+  ],
+  "commit": "bc5f880",
+  "env": {
+   "CUDA_MODULE_LOADING": "LAZY",
+   "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+   "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE": "1",
+   "TORCH_CUDNN_V8_API": "1"
+  },
+  "extra_model_paths": null,
+  "frontend_package": "comfyui-frontend-package==1.57.1",
+  "repo": "https://github.com/comfyanonymous/ComfyUI",
+  "settings": {
+   "Comfy.LinkRenderMode": 2
+  }
+ },
+ "custom_nodes": [
+  {
+   "id": "rapid-moss",
+   "ref": null,
+   "subdir": "comfyui/rapid-moss",
+   "url": "https://huggingface.co/darask0/MOSS-Image_4-step_adapter_lora"
+  }
+ ],
+ "default_view": "app",
+ "download_concurrency": 4,
+ "download_connections": 8,
+ "fast_start": true,
+ "max_session_hours": 7.0,
+ "model_aliases": {
+  "flux2-vae_small.safetensors": "flux2-vae.safetensors",
+  "moss_image_base_int8_convrot.safetensors": "moss_image_base_bf16.safetensors",
+  "moss_image_sft_int8_convrot.safetensors": "moss_image_sft_bf16.safetensors",
+  "qwen3.5_9b_bf16.safetensors": "qwen3.5_9b_int8_convrot.safetensors",
+  "qwen3.5_9b_w4a8_gptq.safetensors": "qwen3.5_9b_int8_convrot.safetensors"
+ },
+ "model_store": "disk",
+ "models": [
+  {
+   "core": true,
+   "dest": "diffusion_models/moss_image_sft_bf16.safetensors",
+   "id": "sft-bf16",
+   "sha256": "f96738d8116d78b7316b57c663d8c98591ddafab7488f48e3099b7655e34ab6f",
+   "size_gb": 10.16,
+   "url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_sft_bf16.safetensors"
+  },
+  {
+   "core": true,
+   "dest": "text_encoders/qwen3.5_9b_int8_convrot.safetensors",
+   "id": "te-int8",
+   "sha256": "32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a",
+   "size_gb": 9.75,
+   "url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/text_encoders/qwen3.5_9b_int8_convrot.safetensors"
+  },
+  {
+   "core": true,
+   "dest": "vae/flux2-vae.safetensors",
+   "id": "vae",
+   "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+   "size_gb": 0.34,
+   "url": "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/vae/flux2-vae.safetensors"
+  },
+  {
+   "core": true,
+   "dest": "loras/moss_image_sft_banding_fix_L37-41_bf16.safetensors",
+   "id": "deband-l37-41",
+   "sha256": "01329abd340dd9cf55677381a11558fe5307c7fd648f1988b441172fbbd86fd5",
+   "size_gb": 1.13,
+   "url": "https://huggingface.co/MATLOWAI/MOSS-Image-SFT-DeBand/resolve/main/moss_image_sft_banding_fix_L37-41_bf16.safetensors"
+  },
+  {
+   "core": true,
+   "dest": "loras/moss_image_sft_banding_fix_L32-36_extra_bf16.safetensors",
+   "id": "deband-l32-36",
+   "sha256": "7f6e43c7566b0c04ad9772cf3efdf9da973b65e242d1a384b17e8db91a6337cd",
+   "size_gb": 1.13,
+   "url": "https://huggingface.co/MATLOWAI/MOSS-Image-SFT-DeBand/resolve/main/moss_image_sft_banding_fix_L32-36_extra_bf16.safetensors"
+  },
+  {
+   "core": true,
+   "dest": "loras/lodestones_moss_sft_8step_dmd_lora_latest.safetensors",
+   "id": "lodestones-8step-as-lora",
+   "sha256": "be82ab2bef78194651815bb6de443cec67553e01c14559f2ad365449445f0452",
+   "size_gb": 1.19,
+   "url": "https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd/resolve/main/lora_latest.safetensors"
+  },
+  {
+   "core": true,
+   "dest": "loras/darask0_moss_sft_4step_dmad_lora.safetensors",
+   "id": "darask0-4step-as-lora",
+   "sha256": "4a4c8e2d6244a0fcdc2822b87b3435226ae57c289aef99fc2ac54edeab9e09bb",
+   "size_gb": 1.19,
+   "url": "https://huggingface.co/darask0/MOSS-Image_4-step_adapter_lora/resolve/main/lora.safetensors"
+  }
+ ],
+ "on_demand": {
+  "akhaliq-4step": [
+   "akhaliq-4step-v2"
+  ],
+  "rapid-moss-4step": [
+   "rapid-4step-lora",
+   "rapid-4step-time",
+   "rapid-4step-dataspace"
+  ]
+ },
+ "pip_installer": "uv",
+ "profile": "moss-image",
+ "smoke": null,
+ "watchdog_gate_lost_min": 20,
+ "workflows": [
+  {
+   "app_inputs": [
+    [
+     3,
+     "text"
+    ],
+    [
+     4,
+     "text"
+    ],
+    [
+     6,
+     "width"
+    ],
+    [
+     6,
+     "height"
+    ],
+    [
+     7,
+     "seed"
+    ]
+   ],
+   "app_outputs": [
+    9
+   ],
+   "default": false,
+   "format": "json",
+   "id": "akhaliq-4step",
+   "inline": "sha256:1c4d3068ed98c518fcd0c6d716ab2aa30d101ae3d579c54c04e8e08216ee1bdf",
+   "loras": [],
+   "overrides": [],
+   "title": "Fast · 4-step turbo LoRA (akhaliq)",
+   "url": null
+  },
+  {
+   "app_inputs": [
+    [
+     3,
+     "text"
+    ],
+    [
+     6,
+     "width"
+    ],
+    [
+     6,
+     "height"
+    ],
+    [
+     5,
+     "noise_seed"
+    ]
+   ],
+   "app_outputs": [
+    9
+   ],
+   "default": false,
+   "format": "json",
+   "id": "rapid-moss-4step",
+   "inline": "sha256:3382f3dfe8b881d27a0c4841b33eaa031a4495098f66da83fa524315096f9975",
+   "loras": [],
+   "overrides": [],
+   "title": "Fast · rapid-moss 4-step adapter (darask0)",
+   "url": null
+  },
+  {
+   "app_inputs": [
+    [
+     18,
+     "value"
+    ],
+    [
+     18,
+     "text"
+    ],
+    [
+     18,
+     "switch"
+    ],
+    [
+     18,
+     "width"
+    ],
+    [
+     18,
+     "height"
+    ],
+    [
+     18,
+     "seed"
+    ]
+   ],
+   "app_outputs": [
+    9
+   ],
+   "default": false,
+   "format": "json",
+   "id": "official-t2i",
+   "inline": "sha256:91d76c158a1e427c09904c6222978065c1ed965c8b3f40ae323e649808af2198",
+   "loras": [],
+   "overrides": [],
+   "title": "Quality · official Text to Image (Comfy-Org)",
+   "url": null
+  },
+  {
+   "app_inputs": [
+    [
+     18,
+     "value"
+    ],
+    [
+     18,
+     "text"
+    ]
+   ],
+   "app_outputs": [
+    9
+   ],
+   "default": false,
+   "format": "json",
+   "id": "official-layout",
+   "inline": "sha256:225aa1c2831bc24083971099d1d6e756f6930e4e7a225268ee95b9ec808fad2c",
+   "loras": [],
+   "overrides": [],
+   "title": "Layout · official Layout-Guided (Comfy-Org)",
+   "url": null
+  },
+  {
+   "app_inputs": [
+    [
+     6,
+     "value"
+    ],
+    [
+     8,
+     "text"
+    ],
+    [
+     1,
+     "choice"
+    ],
+    [
+     22,
+     "value"
+    ],
+    [
+     23,
+     "width"
+    ],
+    [
+     23,
+     "height"
+    ],
+    [
+     23,
+     "batch_size"
+    ]
+   ],
+   "app_outputs": [
+    26
+   ],
+   "default": true,
+   "format": "json",
+   "id": "matlowai-presets",
+   "inline": "sha256:7183c0d2f921c41cc76e94be96666f561e3c43d6d3136aa4134d320f8c34a76b",
+   "loras": [],
+   "overrides": [
+    {
+     "node": 1,
+     "value": "Fast alt · fix + darask0 0.35 · 10 steps",
+     "widget_index": 0
+    },
+    {
+     "node": 1,
+     "value": 4,
+     "widget_index": 1
+    }
+   ],
+   "title": "Default · DeBand banding-fix LoRAs on SFT bf16 (+ DMD/DMAD fast modes)",
+   "url": null
+  },
+  {
+   "app_inputs": [
+    [
+     30,
+     "image"
+    ],
+    [
+     6,
+     "value"
+    ],
+    [
+     8,
+     "text"
+    ],
+    [
+     20,
+     "denoise"
+    ],
+    [
+     1,
+     "choice"
+    ],
+    [
+     22,
+     "value"
+    ]
+   ],
+   "app_outputs": [
+    26
+   ],
+   "default": false,
+   "format": "json",
+   "id": "matlowai-img2img",
+   "inline": "sha256:2cd92d573123400d6ea08ff223d011efc998c3e5d8116ac8ade9eee3f51cf989",
+   "loras": [],
+   "overrides": [
+    {
+     "node": 1,
+     "value": "Fast alt · fix + darask0 0.35 · 10 steps",
+     "widget_index": 0
+    },
+    {
+     "node": 1,
+     "value": 4,
+     "widget_index": 1
+    }
+   ],
+   "title": "Img2Img · DeBand LoRAs on SFT bf16 with Denoise",
+   "url": null
+  }
+ ],
+ "xet_high_performance": true
+}
