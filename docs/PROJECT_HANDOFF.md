@@ -2,6 +2,8 @@
 
 核对日期：2026-11-07（Asia/Shanghai）。源码基线：`7cae344e7e883520a9a0b939089cfd985b45e865`，`main`，AppVersion `1.21.0`。
 
+**后续维护状态：** 同日已根据用户授权发布 [v1.21.1](https://github.com/a3974892-cmd/wakeloom/releases/tag/v1.21.1)，修复 CU 余额处理、统一弹窗并增加生图模型检查；自动更新入口已指向 1.21.1。详细验证与用户 T4/G4 反馈见 [ROADMAP.md](ROADMAP.md)。下文保留首次交接时的历史快照，不能把其中的旧发布状态当作当前状态。
+
 本次是项目知识与维护流程交接，不是一次功能发版。维护入口见 [AGENTS.md](../AGENTS.md)，具体待办见 [ROADMAP.md](ROADMAP.md)，构建与补丁规则见 [CLAUDE.md](../CLAUDE.md)。
 
 ## 资料覆盖与可信度
