@@ -84,12 +84,18 @@ func colabDo(ctx context.Context, method, rawURL string, headers map[string]stri
 		return fmt.Errorf("连不上 Colab：%w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return fmt.Errorf("读取 Colab 响应失败：%w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return &ColabError{Status: resp.StatusCode, Body: string(raw)}
 	}
 	body := strings.TrimPrefix(string(raw), ")]}'\n")
-	if out != nil && strings.TrimSpace(body) != "" {
+	if out != nil {
+		if strings.TrimSpace(body) == "" {
+			return errors.New("Colab 返回了空数据，请重试")
+		}
 		if err := json.Unmarshal([]byte(body), out); err != nil {
 			return fmt.Errorf("Colab 返回了无法识别的数据：%s", truncate(body, 200))
 		}
@@ -98,9 +104,20 @@ func colabDo(ctx context.Context, method, rawURL string, headers map[string]stri
 }
 
 func colabCCU(ctx context.Context) (CCUInfo, error) {
-	var c CCUInfo
-	err := colabDo(ctx, "GET", colabDomain+"/tun/m/ccu-info", nil, &c)
-	return c, err
+	// Missing/null fields are unknown, not a zero balance. Match the required
+	// fields of google-colab-cli's CcuInfo schema.
+	var r struct {
+		Balance     *float64 `json:"currentBalance"`
+		RatePerHour *float64 `json:"consumptionRateHourly"`
+		Assignments *int     `json:"assignmentsCount"`
+	}
+	if err := colabDo(ctx, "GET", colabDomain+"/tun/m/ccu-info", nil, &r); err != nil {
+		return CCUInfo{}, err
+	}
+	if r.Balance == nil || r.RatePerHour == nil || r.Assignments == nil {
+		return CCUInfo{}, errors.New("Colab 没有返回完整的 CU 余额数据，请稍后重试；这不代表余额为 0")
+	}
+	return CCUInfo{Balance: *r.Balance, RatePerHour: *r.RatePerHour, Assignments: *r.Assignments}, nil
 }
 
 func colabList(ctx context.Context) ([]Assignment, error) {
@@ -122,7 +139,16 @@ func nbHash() string {
 }
 
 // colabAssign allocates a runtime with the given accelerator ("L4", "G4", "A100", "T4", …).
-func colabAssign(ctx context.Context, accelerator string) (*Assignment, error) {
+var colabAssignTimeout = 3 * time.Minute
+
+func colabAssign(parent context.Context, accelerator string) (assignment *Assignment, resultErr error) {
+	ctx, cancel := context.WithTimeout(parent, colabAssignTimeout)
+	defer cancel()
+	defer func() {
+		if resultErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && parent.Err() == nil {
+			resultErr = errors.New("申请 GPU 超时，已停止等待。可能是额度、库存或网络问题；请先到 Colab 检查是否已有运行时，再重试或更换 GPU")
+		}
+	}()
 	q := url.Values{"nbh": {nbHash()}, "variant": {"GPU"}, "accelerator": {accelerator}}
 	if accelerator == "" || accelerator == "NONE" {
 		q = url.Values{"nbh": {q.Get("nbh")}}
@@ -147,7 +173,15 @@ func colabAssign(ctx context.Context, accelerator string) (*Assignment, error) {
 		if err == nil || !(errors.As(err, &ce) && (ce.Status == 502 || ce.Status == 503 || ce.Status == 504)) {
 			break
 		}
-		time.Sleep(time.Duration(10<<attempt) * time.Second)
+		if attempt < 3 {
+			timer := time.NewTimer(time.Duration(10<<attempt) * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
 	}
 	if err != nil {
 		return nil, err

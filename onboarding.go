@@ -23,7 +23,7 @@ var checklistItems = []string{"network", "login", "wake", "generate", "stop"}
 
 // cuRateGuess is a rough Colab compute-unit price per hour by GPU, used before Wakeloom has seen the real
 // rate (Colab reports it while a GPU runs; learnCURate keeps the latest real value per GPU in the config).
-var cuRateGuess = map[string]float64{"T4": 1.8, "L4": 4.8, "G4": 9, "A100": 11.8, "H100": 18}
+var cuRateGuess = map[string]float64{"T4": 1.8, "L4": 4.8, "G4": 10, "A100": 11.8, "H100": 18}
 
 func cuRate(acc string) (rate float64, measured bool) {
 	acc = strings.ToUpper(strings.TrimSpace(acc))

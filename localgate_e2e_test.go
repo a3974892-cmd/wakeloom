@@ -49,7 +49,7 @@ func TestLocalGateE2E(t *testing.T) {
 				atomic.AddInt32(&unassigned, 1)
 			}
 		case r.URL.Path == "/tun/m/ccu-info":
-			io.WriteString(w, `{"currentBalance":8.65,"consumptionRateHourly":10,"assignmentsCount":1}`)
+			io.WriteString(w, `{"currentBalance":18.65,"consumptionRateHourly":10,"assignmentsCount":1}`)
 		}
 	}))
 	defer mock.Close()

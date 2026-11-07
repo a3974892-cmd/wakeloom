@@ -1,10 +1,12 @@
 # Publishes a release: tests, Windows build, GitHub Release with the exe + latest.json
 # (latest.json is what the app's auto-updater reads).
-# Start it either by pushing a tag vX.Y.Z, or from the Actions tab ("Run workflow"),
+# Start it by updating AppVersion on main, pushing a tag vX.Y.Z, or "Run workflow",
 # which releases the version written in update.go (AppVersion).
 name: release
 on:
   push:
+    branches: ["main"]
+    paths: ["update.go"]
     tags: ["v*"]
   workflow_dispatch:
 permissions:
@@ -27,6 +29,8 @@ jobs:
           echo "TAG=v$v" >> "$GITHUB_ENV"
       - name: Test
         run: go test ./...
+      - name: Image model checks
+        run: python3 gateway/src/test_image_models.py
       - name: Build
         run: |
           mkdir dist
@@ -52,5 +56,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
           else
-            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Wakeloom $V" --notes-file notes.md
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Wakeloom $V" --notes-file notes.md --latest
           fi

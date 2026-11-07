@@ -61,13 +61,16 @@ type LocalGate struct {
 	wbKey          string
 	ccu            *CCUInfo
 	ccuAt          time.Time
+	ccuSeq         uint64
+	ccuLoading     bool
+	ccuError       string
 	extendsUsed    int
 	lastActivity   time.Time
 	wsOpen         int
 	libInstalled   []string
 	fetching       []string
 	fetchErr       string
-	cancel         context.CancelFunc
+	cancel         context.CancelCauseFunc
 	execMu         sync.Mutex
 	hbFails        int
 	rp             *httputil.ReverseProxy
@@ -266,6 +269,8 @@ func (g *LocalGate) status() map[string]any {
 	}
 	if g.ccu != nil {
 		st["cu"] = map[string]any{"balance": g.ccu.Balance, "per_hour": g.ccu.RatePerHour}
+	} else {
+		st["cu"] = map[string]any{"balance": nil, "per_hour": nil, "error": g.ccuError}
 	}
 	return st
 }
@@ -431,35 +436,94 @@ func (g *LocalGate) events(w http.ResponseWriter, r *http.Request) {
 
 // ---- CU ----
 
+func (g *LocalGate) resetCCU() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.ccuSeq++ // Ignore responses from the previous login or a superseded query.
+	g.ccu, g.ccuAt, g.ccuLoading, g.ccuError = nil, time.Time{}, false, ""
+}
+
+func (g *LocalGate) beginCCU() uint64 {
+	// Caller holds g.mu.
+	g.ccuSeq++
+	g.ccuAt, g.ccuLoading = time.Now(), true
+	return g.ccuSeq
+}
+
+func (g *LocalGate) readCCU(ctx context.Context, seq uint64) (CCUInfo, error) {
+	c, err := colabCCU(ctx)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if seq != g.ccuSeq {
+		return CCUInfo{}, errors.New("登录状态或余额查询已更新，请重新查询")
+	}
+	g.ccuLoading = false
+	if err != nil {
+		g.ccu, g.ccuError = nil, err.Error()
+	} else {
+		g.ccu, g.ccuError = &c, ""
+	}
+	return c, err
+}
+
+func (g *LocalGate) queryCCU(ctx context.Context) (CCUInfo, error) {
+	g.mu.Lock()
+	seq := g.beginCCU()
+	g.mu.Unlock()
+	return g.readCCU(ctx, seq)
+}
+
 func (g *LocalGate) refreshCCU(force bool) {
+	if ok, _ := googleSignedIn(); !ok {
+		g.resetCCU()
+		return
+	}
 	g.mu.Lock()
 	every := 5 * time.Minute
 	if g.state != "sleeping" {
 		every = time.Minute
 	}
-	due := force || time.Since(g.ccuAt) > every
+	if g.ccuError != "" {
+		every = 15 * time.Second
+	}
+	due := force || !g.ccuLoading && time.Since(g.ccuAt) > every
+	var seq uint64
 	if due {
-		g.ccuAt = time.Now()
+		seq = g.beginCCU()
 	}
 	g.mu.Unlock()
 	if !due {
 		return
 	}
-	if ok, _ := googleSignedIn(); !ok {
-		return
-	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if c, err := colabCCU(ctx); err == nil {
-			g.mu.Lock()
-			g.ccu = &c
-			g.mu.Unlock()
-		}
+		g.readCCU(ctx, seq)
 	}()
 }
 
 // ---- wake / boot ----
+
+// Local safety reserve based on the reported G4 allocation failure below 10 CU.
+// This is an app preflight policy, not a guarantee about Colab's admission rules.
+var localWakeMinimums = map[string]float64{"G4": 10}
+
+func (g *LocalGate) allocateGPU(ctx context.Context, accel string) (*Assignment, error) {
+	if minimum := localWakeMinimums[accel]; minimum > 0 {
+		g.logLine("核对 " + accel + " 启动余额…")
+		check, cancel := context.WithTimeout(ctx, 20*time.Second)
+		cu, err := g.queryCCU(check)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("无法核对 %s 启动所需余额，请在设置中重新查询后再试：%w", accel, err)
+		}
+		if cu.Balance < minimum {
+			return nil, fmt.Errorf("CU 余额 %.2f，不足 %s 的本地启动预留额度 %.0f CU（约 1 小时）。请充值或选择其他 GPU；尚未申请 GPU", cu.Balance, accel, minimum)
+		}
+	}
+	g.logLine(fmt.Sprintf("申请 Colab %s GPU …（最多等待 3 分钟）", accel))
+	return colabAssign(ctx, accel)
+}
 
 func (g *LocalGate) wakeHandler(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -477,7 +541,10 @@ func (g *LocalGate) wakeHandler(w http.ResponseWriter, r *http.Request) {
 	st := g.state
 	g.mu.Unlock()
 	if st != "sleeping" && st != "failed" {
-		jsonOut(w, 200, map[string]any{"joined": true, "state": st, "profile": g.profile})
+		g.mu.Lock()
+		profile := g.profile
+		g.mu.Unlock()
+		jsonOut(w, 200, map[string]any{"joined": true, "state": st, "profile": profile})
 		return
 	}
 	profs := localProfiles()
@@ -510,20 +577,35 @@ func (g *LocalGate) wakeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	k := make([]byte, 24)
 	rand.Read(k)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancelCause(context.Background())
 	g.mu.Lock()
+	// Profile loading happens outside the lock. Another wake/stop can arrive
+	// meanwhile, so reserve the session atomically before starting any Colab work.
+	if g.state != "sleeping" && g.state != "failed" {
+		st, profile := g.state, g.profile
+		g.mu.Unlock()
+		cancel(nil)
+		jsonOut(w, 200, map[string]any{"joined": true, "state": st, "profile": profile})
+		return
+	}
 	g.cancel = cancel
+	g.state, g.reason, g.since = "allocating", "wake", nowF()
 	g.profile, g.accel, g.sessionStarted, g.extendsUsed = pr.ID, accel, nowF(), 0
 	g.progress, g.tunnel, g.wbKey, g.libInstalled, g.fetching, g.fetchErr = map[string]any{}, "", hex.EncodeToString(k), nil, nil, ""
 	g.logs = nil
 	g.mu.Unlock()
-	g.setState("allocating", "wake")
+	g.persist()
+	g.publish("state", g.status())
 	go g.boot(ctx, pr, in.Workflows, extras)
 	jsonOut(w, 202, map[string]any{"joined": false, "state": "allocating", "profile": pr.ID})
 }
 
 func (g *LocalGate) boot(ctx context.Context, pr *LocalProfile, workflows []string, extras []LibItem) {
 	fail := func(err error) {
+		if ctx.Err() != nil {
+			g.logLine("启动已取消：" + context.Cause(ctx).Error())
+			return // stop owns the final state; do not overwrite it with "failed".
+		}
 		g.logLine("✗ " + err.Error())
 		g.setState("failed", truncate(err.Error(), 300))
 		g.mu.Lock()
@@ -539,15 +621,29 @@ func (g *LocalGate) boot(ctx context.Context, pr *LocalProfile, workflows []stri
 		}
 		os.Remove(lgPath())
 	}
-	g.logLine(fmt.Sprintf("申请 Colab %s GPU …", g.accel))
-	a, err := colabAssign(ctx, g.accel)
+	a, err := g.allocateGPU(ctx, g.accel)
 	if err != nil {
+		if errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			err = fmt.Errorf("申请 GPU 的网络请求被中断，但程序未发出停止指令。请检查代理连接，并到 Colab 查看是否已分配运行时后再重试：%w", err)
+		}
 		fail(err)
 		return
 	}
 	rt := &Runtime{A: a}
 	rt.OnReconnect = g.refreshToken
 	g.mu.Lock()
+	if ctx.Err() != nil || g.state == "stopping" || g.state == "sleeping" {
+		g.mu.Unlock()
+		// Allocation can finish just as stop is requested, before stop sees g.asg.
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := colabUnassign(cleanup, a.Endpoint); err != nil {
+			g.logLine("⚠ 启动取消后释放 GPU 失败，请到 Colab 网页检查运行时：" + err.Error())
+		} else {
+			g.logLine("启动已取消，已释放刚分配的 GPU")
+		}
+		return
+	}
 	g.asg, g.rt, g.proxyAt = a, rt, time.Now()
 	g.mu.Unlock()
 	g.persist()
@@ -763,15 +859,19 @@ func (g *LocalGate) installLibrary(ids []string) string {
 func (g *LocalGate) stop(reason string) {
 	g.mu.Lock()
 	a, cancel, st := g.asg, g.cancel, g.state
-	g.asg, g.rt, g.tunnel = nil, nil, ""
-	g.mu.Unlock()
-	if st == "sleeping" {
+	if st == "sleeping" || st == "stopping" {
+		g.mu.Unlock()
 		return
 	}
+	g.state, g.reason, g.since = "stopping", reason, nowF()
+	g.asg, g.rt, g.tunnel = nil, nil, ""
+	g.mu.Unlock()
+	g.logLine("停止 GPU：" + reason)
 	if cancel != nil {
-		cancel()
+		cancel(errors.New(reason))
 	}
-	g.setState("stopping", reason)
+	g.persist()
+	g.publish("state", g.status())
 	if a != nil {
 		ctx, c2 := context.WithTimeout(context.Background(), 60*time.Second)
 		defer c2()

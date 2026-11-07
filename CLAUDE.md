@@ -67,7 +67,7 @@ kit 的日志输出用英文；程序界面和更新日志用中文。
 1. 改 `update.go` 的 `const AppVersion = "X.Y.Z"`。
 2. 在 `CHANGELOG.md` 顶部（`# 更新日志` 下）加 `## vX.Y.Z` 和若干 `- ` 条目（会成为 Release 说明和 `latest.json` 的 notes）。
 3. `go test ./...`，提交并推送到 `main`。
-4. 推标签：`git tag vX.Y.Z && git push origin vX.Y.Z`（也可在 Actions 页手动运行 release，发布 `AppVersion` 对应的版本）。
+4. 主分支上修改 `update.go` 会自动触发 release；也可推标签 `git tag vX.Y.Z && git push origin vX.Y.Z`，或在 Actions 页手动运行 release，发布 `AppVersion` 对应的版本。同一版本只选一个触发方式，避免并行上传。
 5. 工作流会：校验标签与 `AppVersion` 一致（不一致直接失败）→ 测试 → 构建 `Wakeloom-X.Y.Z.exe` → 生成 `latest.json` → 连同 `gateway/gate-*.py` 发布到 GitHub Release。程序的自动更新读 `releases/latest/download/latest.json`。
 
 ## 注意事项

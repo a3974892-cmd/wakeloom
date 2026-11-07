@@ -82,6 +82,7 @@ func googleSignOut() {
 	gMu.Lock()
 	gTok = nil
 	gMu.Unlock()
+	lg.resetCCU()
 	os.Remove(gTokenPath())
 }
 
@@ -179,6 +180,7 @@ func googleExchange(ctx context.Context, code string) (string, error) {
 	gMu.Lock()
 	gTok = t
 	gMu.Unlock()
+	lg.resetCCU()
 	writeJSON(gTokenPath(), t)
 	return t.Email, nil
 }

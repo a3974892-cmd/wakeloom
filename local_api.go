@@ -39,7 +39,7 @@ func localRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/local/ccu", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
 		defer cancel()
-		c, err := colabCCU(ctx)
+		c, err := lg.queryCCU(ctx)
 		if err != nil {
 			errOut(w, 502, err)
 			return
@@ -49,7 +49,7 @@ func localRoutes(api *http.ServeMux) {
 		for _, a := range list {
 			accs = append(accs, a.Accelerator)
 		}
-		jsonOut(w, 200, map[string]any{"balance": c.Balance, "per_hour": c.RatePerHour, "assignments": c.Assignments, "running": accs})
+		jsonOut(w, 200, map[string]any{"balance": c.Balance, "per_hour": c.RatePerHour, "assignments": c.Assignments, "running": accs, "wake_minimums": localWakeMinimums})
 	})
 	// End-to-end check: allocate a GPU, run one cell, release it. Streams progress as SSE.
 	api.HandleFunc("POST /api/local/smoke", func(w http.ResponseWriter, r *http.Request) {

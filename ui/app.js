@@ -141,10 +141,10 @@ function renderStatus() {
       tiles.push(["剩余时长", human(gst.remaining_s), `<div class="mini"><div style="width:${Math.max(0, Math.min(100, gst.remaining_s / total * 100))}%"></div></div>`, gst.warn ? "warn" : ""]);
     } else tiles.push(["剩余时长", "—", ""]);
     if (gst.cu) {
-      tiles.push(["CU 余额", gst.cu.balance != null ? gst.cu.balance.toFixed(2) : "—", gst.cu.balance != null && gst.cu.per_hour ? "约可用 " + Math.floor(gst.cu.balance / gst.cu.per_hour) + " 小时" : ""]);
+      tiles.push(["CU 余额", Number.isFinite(gst.cu.balance) ? gst.cu.balance.toFixed(2) : "—", gst.cu.error ? esc("暂时无法读取：" + gst.cu.error) : Number.isFinite(gst.cu.balance) && gst.cu.per_hour ? "约可用 " + Math.floor(gst.cu.balance / gst.cu.per_hour) + " 小时" : ""]);
       if (gst.cu.today != null) tiles.push(["今日 / 本月", `${(gst.cu.today || 0).toFixed(1)} / ${(gst.cu.month || 0).toFixed(1)}`, "CU"]);
       else if (isLocal()) tiles.push(["GPU 型号", gst.accelerator || "—", "本地模式"]);
-      tiles.push(["开机耗速", (gst.cu.per_hour || 0).toFixed(2), "CU / 小时"]);
+      tiles.push(["开机耗速", Number.isFinite(gst.cu.per_hour) ? gst.cu.per_hour.toFixed(2) : "—", "CU / 小时"]);
     }
     if (!isLocal() && gst.default_accelerator) tiles.push(["GPU 型号", running ? gst.accelerator : ($("#wakeAcc").value || gst.default_accelerator), running ? "本次开机" : "下次唤醒"]);
     else if (gst.clients != null) tiles.push(["在线访客", gst.clients, ""]);
@@ -158,7 +158,7 @@ function renderStatus() {
   const busy = gst && (gst.busy || BUSY.has(s));
   $("#wakeOpts").hidden = !asleep || !gst;
   $("#btnWake").hidden = !asleep; $("#btnWakeTop").hidden = !asleep;
-  $("#btnWake").disabled = $("#btnWakeTop").disabled = !gst;
+  $("#btnWake").disabled = $("#btnWakeTop").disabled = !gst || wakePending;
   $("#btnStop").hidden = asleep; $("#btnStopTop").hidden = asleep;
   $("#btnStop").disabled = $("#btnStopTop").disabled = s === "stopping";
   $("#btnExtend").hidden = s !== "ready";
@@ -223,7 +223,7 @@ $$("#modeSeg button").forEach(b => b.onclick = async () => {
   const m = b.dataset.m; if (m === (appCfg.mode || "gateway")) return;
   const running = gst && gst.state && gst.state !== "sleeping" && gst.state !== "failed";
   const active = jobs.some(j => ["running", "submitted", "uploading", "waiting", "queued"].includes(j.status));
-  if ((running || active) && !confirm(`当前${(appCfg.mode || "gateway") === "local" ? "本地" : "网关"}模式的 GPU ${running ? "还开着" : ""}${active ? "，队列里还有任务" : ""}。切换后，那边的 GPU 不会自动停止，队列任务会改到新模式执行。确定切换？`)) return;
+  if ((running || active) && !await appConfirm(`${running ? "当前模式的 GPU 仍在运行。" : ""}${active ? "队列中还有未完成的任务。" : ""}\n\n切换后，原来的 GPU 会继续运行并消耗 CU，队列任务将改到新模式执行。`, { title: `切换到${m === "local" ? "本地" : "网关"}模式？`, ok: "继续切换", cancel: "保留当前模式" })) return;
   const c = await api("/api/config"); const cfg2 = c.config; cfg2.mode = m; cfg2.cf_client_secret = cfg2.cf_client_secret; 
   await api("/api/config", { json: cfg2 });
   appCfg.mode = m; renderMode();
@@ -232,34 +232,102 @@ $$("#modeSeg button").forEach(b => b.onclick = async () => {
   gst = null; await pollStatus(); loadProfiles(); connectEvents(); loadTemplates();
 });
 
+let wakePending = false;
+function wakeNotice(options) { return appDialog(options); }
+let dialogSequence = 0;
+function appDialog({ title, message, balance, minimum, accelerator, confirm = false, buttons, inputValue = null }) {
+  return new Promise(resolve => {
+    const previous = document.activeElement;
+    const dialog = document.createElement("dialog");
+    dialog.className = "wake-notice";
+    const id = "appDialog" + (++dialogSequence);
+    dialog.setAttribute("aria-labelledby", id + "Title");
+    dialog.setAttribute("aria-describedby", id + "Message");
+    const actions = buttons || (confirm ? [{ value: "cancel", label: "暂不开机" }, { value: "continue", label: "仍然开机", primary: true }] : [{ value: "choose", label: "更换 GPU" }, { value: "buy", label: "购买 CU ↗", primary: true }]);
+    dialog.innerHTML = `<form method="dialog">
+      <div class="wake-notice-head"><span class="wake-notice-icon" aria-hidden="true">!</span><button type="button" class="wake-notice-close" value="cancel" aria-label="关闭">×</button></div>
+      <h2 id="${id}Title">${esc(title)}</h2>
+      <p id="${id}Message">${esc(message)}</p>
+      ${inputValue !== null ? `<label class="wake-notice-input">名称<input value="${esc(inputValue)}" autocomplete="off" autofocus></label>` : ""}
+      ${minimum ? `<div class="wake-notice-balance"><div><span>当前余额</span><strong>${balance.toFixed(2)} <small>CU</small></strong></div><div><span>${esc(accelerator)} 启动预留</span><strong>${minimum} <small>CU</small></strong></div></div><p class="wake-notice-footnote">按约 1 小时用量预留，尚未申请 GPU。</p>` : ""}
+      <div class="wake-notice-actions">${actions.map((a, i) => `<button type="${a.primary ? "submit" : "button"}" class="btn${a.primary ? " primary" : ""}" value="${esc(a.value)}" ${i === 0 && inputValue === null ? "autofocus" : ""}>${esc(a.label)}</button>`).join("")}</div>
+    </form>`;
+    dialog.querySelectorAll("button[value]").forEach(b => b.onclick = e => { e.preventDefault(); dialog.close(b.value); });
+    dialog.querySelector("form").onsubmit = e => { e.preventDefault(); dialog.close(e.submitter ? e.submitter.value : "accept"); };
+    // Escape closes only this dialog, preserving any editor modal underneath it.
+    dialog.addEventListener("keydown", e => { if (e.key === "Escape") e.stopPropagation(); });
+    dialog.addEventListener("close", () => {
+      const result = dialog.returnValue;
+      const value = inputValue !== null && result === "accept" ? dialog.querySelector("input").value : null;
+      dialog.remove();
+      if (previous && previous.isConnected) previous.focus();
+      resolve(inputValue !== null ? value : result);
+    }, { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
+    if (inputValue !== null) dialog.querySelector("input").select();
+  });
+}
+
+async function appConfirm(message, { title = "请确认操作", ok = "确定", cancel = "取消" } = {}) {
+  return await appDialog({ title, message, buttons: [{ value: "cancel", label: cancel }, { value: "accept", label: ok, primary: true }] }) === "accept";
+}
+function appAlert(message) {
+  return appDialog({ title: "操作提示", message, buttons: [{ value: "accept", label: "知道了", primary: true }] });
+}
+function appPrompt(message, value = "") {
+  return appDialog({ title: message, message: "输入名称后保存，取消则保留原来的内容。", inputValue: value, buttons: [{ value: "cancel", label: "取消" }, { value: "accept", label: "保存", primary: true }] });
+}
+
 async function wake() {
-  const body = {};
-  const prof = $("#wakeProfile").value; if (prof) body.profile = prof;
-  if (isLocal()) {
-    body.accelerator = $("#wakeAcc").value;
-    body.extras = $$("#extrasBox input:checked").map(i => i.value);
-    const p = profiles && profiles.profiles.find(x => x.id === prof);
-    const est = (p ? p.size_gb_default : 0);
-    if (gst && gst.cu && gst.cu.balance != null && gst.cu.balance < 2 && !confirm(`CU 余额只剩 ${gst.cu.balance.toFixed(2)}，确定开机？`)) return;
-    void est;
-  } else if (gst && gst.default_accelerator && !$("#wakeAcc").disabled) {
-    body.accelerator = $("#wakeAcc").value;
-  }
-  const extra = $$("#wfBox input:checked").map(i => i.value);
-  if (extra.length && profiles) {
-    const p = profiles.profiles.find(x => x.id === prof);
-    body.workflows = p.workflows.filter(w => !w.optional).map(w => w.id).concat(extra);
-  }
-  try { await api("/api/gate/wake", { json: body }); toast("已发送唤醒"); connectEvents(); } catch (e) { toast("唤醒失败：" + e.message); }
-  pollStatus();
+  if (wakePending) return false;
+  wakePending = true;
+  $("#btnWake").disabled = $("#btnWakeTop").disabled = true;
+  try {
+    const body = {};
+    const prof = $("#wakeProfile").value; if (prof) body.profile = prof;
+    if (isLocal()) {
+      body.accelerator = $("#wakeAcc").value;
+      body.extras = $$("#extrasBox input:checked").map(i => i.value);
+      // Always check the current account; a cached zero must not decide this warning.
+      let cu = null;
+      try {
+        cu = await api("/api/local/ccu", { json: {} });
+        if (!Number.isFinite(cu.balance)) throw new Error("Colab 未返回有效余额");
+        if (gst) gst.cu = cu;
+      } catch (e) {
+        if (gst) gst.cu = { balance: null, per_hour: null, error: e.message };
+        if (await wakeNotice({ title: "暂时无法读取余额", message: `这不代表余额为 0。${e.message}。继续开机会消耗 CU。`, confirm: true }) !== "continue") return false;
+        cu = null;
+      }
+      const minimum = cu && cu.wake_minimums && cu.wake_minimums[body.accelerator];
+      if (minimum > 0 && cu.balance < minimum) {
+        const action = await wakeNotice({ title: "余额不足，暂时无法启动", message: `当前余额未达到 ${body.accelerator} 的启动预留额度。可以更换 GPU，或补充算力后再试。`, balance: cu.balance, minimum, accelerator: body.accelerator });
+        if (action === "buy") await api("/api/open-url", { json: { url: "https://colab.research.google.com/signup" } });
+        if (action === "choose") $("#wakeAcc").focus();
+        return false;
+      }
+      if (cu && cu.balance < 2 && await wakeNotice({ title: "CU 余额较低", message: `当前余额 ${cu.balance.toFixed(2)} CU，可用时长较短。继续开机会消耗 CU，请留意用量。`, confirm: true }) !== "continue") return false;
+    } else if (gst && gst.default_accelerator && !$("#wakeAcc").disabled) {
+      body.accelerator = $("#wakeAcc").value;
+    }
+    const extra = $$("#wfBox input:checked").map(i => i.value);
+    if (extra.length && profiles) {
+      const p = profiles.profiles.find(x => x.id === prof);
+      body.workflows = p.workflows.filter(w => !w.optional).map(w => w.id).concat(extra);
+    }
+    await api("/api/gate/wake", { json: body }); toast("已发送唤醒"); connectEvents();
+    return true;
+  } catch (e) { toast("唤醒失败：" + e.message); return false; }
+  finally { wakePending = false; await pollStatus(); }
 }
 async function stopGate() {
-  if (!confirm("确定停止并释放 GPU？正在跑的任务会中断。")) return;
+  if (!await appConfirm("正在生成的任务会中断。停止前会尝试备份工作流。", { title: "停止并释放 GPU？", ok: "停止 GPU", cancel: "继续运行" })) return;
   const btns = [$("#btnStop"), $("#btnStopTop")];
   btns.forEach(b => { b.disabled = true; b.dataset.t = b.textContent; b.textContent = "备份工作流…"; });
   try {
     const r = await api("/api/gate/stop", { json: {} });
-    if (r && r.backup_warning) alert("已停止。" + r.backup_warning); else toast("已停止");
+    if (r && r.backup_warning) await appAlert("已停止。" + r.backup_warning); else toast("已停止");
   } catch (e) { toast("停止失败：" + e.message); }
   finally { btns.forEach(b => { b.disabled = false; if (b.dataset.t) b.textContent = b.dataset.t; }); }
   pollStatus(); if (typeof udRefresh === "function") udRefresh();
@@ -270,7 +338,7 @@ $("#btnExtend").onclick = async () => { try { await api("/api/gate/extend", { js
 $("#btnOpenComfy").onclick = () => api("/api/open-url", { json: { url: "comfy" } });
 
 // ---------------- boot log (pretty) ----------------
-const STAGE_CN = { bootstrap: "引导", deps: "安装依赖", install_workflows: "安装工作流", download: "下载模型", comfy_boot: "启动 ComfyUI", comfy_check: "检查 ComfyUI", smoke: "自检" };
+const STAGE_CN = { bootstrap: "引导", deps: "安装依赖", install_workflows: "安装工作流", download: "下载模型", comfy_boot: "启动 ComfyUI", comfy_check: "检查 ComfyUI", image_models: "校验生图模型", smoke: "自检" };
 let rawLines = [];
 function fmtLine(line) {
   let m;
@@ -363,22 +431,22 @@ $("#tplFile").onchange = async e => {
   const f = e.target.files[0]; e.target.value = "";
   if (!f) return;
   const text = await f.text();
-  const name = prompt("给这个模板起个名字：", f.name.replace(/\.json$/i, ""));
+  const name = await appPrompt("给这个模板起个名字：", f.name.replace(/\.json$/i, ""));
   if (name === null) return;
   try { const r = await api("/api/templates", { json: { name, json: text } }); toast("已导入"); await loadTemplates(r.id); }
-  catch (err) { alert("导入失败：" + err.message); }
+  catch (err) { await appAlert("导入失败：" + err.message); }
 };
-$("#btnResetForm").onclick = () => {
-  if (!curTpl || !confirm("把参数恢复成推荐值（提示词恢复成模板自带的）？")) return;
+$("#btnResetForm").onclick = async () => {
+  if (!curTpl || !await appConfirm("把参数恢复成推荐值（提示词恢复成模板自带的）？")) return;
   try { localStorage.removeItem(draftKey(curTpl.id)); } catch { }
   $("#jobTitle").value = ""; renderForm({});
 };
 $("#btnRename").onclick = async () => {
-  const n = prompt("新名字：", curTpl.name); if (!n) return;
+  const n = await appPrompt("新名字：", curTpl.name); if (!n) return;
   await api("/api/templates/" + curTpl.id, { json: { name: n } }); loadTemplates(curTpl.id);
 };
 $("#btnDelTpl").onclick = async () => {
-  if (!confirm(`删除模板「${curTpl.name}」？`)) return;
+  if (!await appConfirm(`删除模板「${curTpl.name}」？`)) return;
   await api("/api/templates/" + curTpl.id, { method: "DELETE" }); curTpl = null; loadTemplates();
 };
 
@@ -641,19 +709,23 @@ function insertText(s) {
   t.value = t.value.slice(0, a) + s + t.value.slice(b);
   t.focus(); t.selectionStart = t.selectionEnd = a + s.length; updCount(t);
 }
-$("#btnSkeleton").onclick = () => {
+$("#btnSkeleton").onclick = async () => {
   const t = mainTextarea(); if (!t) return toast("这个模板没有文本参数");
   const dur = Math.min(15, Math.max(4, +$("#h3Dur").value || 6));
   const sk = skeleton($("#h3Mode").value, dur);
-  if (t.value.trim() && !confirm("替换当前提示词？（取消 = 插入到光标处）")) insertText(sk);
-  else { t.value = sk; updCount(t); t.focus(); const i = t.value.indexOf("___"); if (i >= 0) { t.selectionStart = i; t.selectionEnd = i + 3; } }
+  if (t.value.trim()) {
+    const action = await appDialog({ title: "如何使用提示词骨架？", message: "当前已有提示词，可以替换全部内容，或插入到光标处。", buttons: [{ value: "cancel", label: "取消" }, { value: "insert", label: "插入光标处" }, { value: "replace", label: "替换全部", primary: true }] });
+    if (action === "insert") { insertText(sk); return; }
+    if (action !== "replace") return;
+  }
+  t.value = sk; updCount(t); t.focus(); const i = t.value.indexOf("___"); if (i >= 0) { t.selectionStart = i; t.selectionEnd = i + 3; }
 };
 
 // prompt library
 let promptLib = [];
 $("#btnSavePrompt").onclick = async () => {
   const t = mainTextarea(); if (!t || !t.value.trim()) return toast("提示词是空的");
-  const name = prompt("保存为：", t.value.trim().replace(/\s+/g, " ").slice(0, 30)); if (!name) return;
+  const name = await appPrompt("保存为：", t.value.trim().replace(/\s+/g, " ").slice(0, 30)); if (!name) return;
   promptLib = await api("/api/prompts");
   promptLib.unshift({ name, text: t.value, mode: $("#h3Mode").value, at: Date.now() });
   await api("/api/prompts", { json: promptLib }); toast("已存入提示词库");
@@ -752,7 +824,7 @@ async function loadFiles() {
     <div class="info"><div class="n" title="${esc(f.name)}">${esc(f.name)}</div><div class="row"><span>${esc(f.dir)} · ${fmtSize(f.size)}</span><span><button data-reveal="${esc(f.path)}">定位</button><button data-del="${esc(f.path)}">删除</button></span></div></div></div>`).join("") : `<div class="card empty" style="grid-column:1/-1">还没有结果文件。先唤醒 GPU 并提交任务，生成的文件会自动下载到这里。<div class="row gap center" style="margin-top:12px"><button class="btn sm" data-empty="console">去控制台唤醒</button><button class="btn sm" data-empty="ai">用 AI 页生图</button></div></div>`;
   $$("#fileGrid .media").forEach(m => m.onclick = () => preview(m.dataset.path, m.dataset.kind));
   $$("#fileGrid [data-reveal]").forEach(b => b.onclick = () => api("/api/open", { json: { path: b.dataset.reveal } }));
-  $$("#fileGrid [data-del]").forEach(b => b.onclick = async () => { if (!confirm("删除这个文件？")) return; await api("/api/delete-file", { json: { path: b.dataset.del } }); loadFiles(); });
+  $$("#fileGrid [data-del]").forEach(b => b.onclick = async () => { if (!await appConfirm("删除这个文件？")) return; await api("/api/delete-file", { json: { path: b.dataset.del } }); loadFiles(); });
   $$("#fileGrid video").forEach(v => { v.onmouseenter = () => v.play().catch(() => { }); v.onmouseleave = () => v.pause(); });
   $$("#fileGrid [data-empty]").forEach(b => b.onclick = () => emptyAction(b.dataset.empty));
 }
@@ -844,7 +916,7 @@ function renderLib() {
   });
   $$("[data-inst]", list).forEach(b => b.onclick = () => libInstall([b.dataset.inst]));
   $$("[data-del]", list).forEach(b => b.onclick = async () => {
-    if (!confirm("从库里删除这一项？（不影响已装在当前 GPU 上的文件）")) return;
+    if (!await appConfirm("从库里删除这一项？（不影响已装在当前 GPU 上的文件）")) return;
     try { await api("/api/gate/library/" + encodeURIComponent(b.dataset.del), { method: "DELETE" }); libSel.delete(b.dataset.del); } catch (e) { toast(e.message); }
     loadLib();
   });
@@ -861,7 +933,7 @@ $("#btnLibInstallSel").onclick = () => libInstall([...libSel]);
 async function libInstall(ids) {
   const hasNode = ids.some(id => (lib.items.find(i => i.id === id) || {}).kind === "node");
   const active = jobs.some(j => ["running", "submitted", "uploading"].includes(j.status));
-  if (hasNode && active && !confirm("安装插件后会重启 ComfyUI（约 30 秒），正在生成的任务会中断。继续？")) return;
+  if (hasNode && active && !await appConfirm("安装插件后会重启 ComfyUI（约 30 秒），正在生成的任务会中断。继续？")) return;
   try { await api("/api/gate/library/install", { json: { ids } }); toast("开始安装"); libSel.clear(); }
   catch (e) { toast("安装失败：" + e.message); }
   loadLib();
@@ -940,7 +1012,7 @@ function renderLLMs() {
   </div>`).join("");
   $$("[name=llmdef]").forEach(r => r.onchange = () => { defaultLLM = r.value; saveAll("已设为默认"); });
   $$("[data-ledit]").forEach(b => b.onclick = () => llmForm(+b.dataset.ledit));
-  $$("[data-ldel]").forEach(b => b.onclick = () => { if (!confirm("删除这个 API？")) return; llms.splice(+b.dataset.ldel, 1); saveAll("已删除"); });
+  $$("[data-ldel]").forEach(b => b.onclick = async () => { if (!await appConfirm("删除这个 API？")) return; llms.splice(+b.dataset.ldel, 1); saveAll("已删除"); });
   $$("[data-ltest]").forEach(b => b.onclick = async () => {
     const m = $(`[data-tmsg="${b.dataset.ltest}"]`); m.textContent = "测试中…";
     try { const r = await api("/api/llm/test", { json: llms[+b.dataset.ltest] }); m.textContent = `✓ ${r.ms} ms`; }
@@ -1009,7 +1081,7 @@ $("#guideFile").onchange = async () => {
   loadGuide();
 };
 $("#btnGuideClear").onclick = async () => {
-  if (!confirm("清除导入的 H3 提示词指南？之后改用内置通用说明。")) return;
+  if (!await appConfirm("清除导入的 H3 提示词指南？之后改用内置通用说明。")) return;
   await api("/api/prompt-guide", { method: "DELETE" }).catch(e => toast(e.message));
   loadGuide();
 };
@@ -1119,15 +1191,16 @@ $("#btnGLogin").onclick = async () => {
 $("#gOpenAgain").onclick = e => { e.preventDefault(); if (gAuthURL) api("/api/open-url", { json: { url: gAuthURL } }); };
 $("#btnGCode").onclick = async () => {
   $("#gErr").textContent = ""; $("#btnGCode").disabled = true;
-  try { const r = await api("/api/local/code", { json: { code: $("#gCode").value } }); toast("已登录 " + (r.email || "")); $("#gCode").value = ""; loadLocal(); }
+  try { const r = await api("/api/local/code", { json: { code: $("#gCode").value } }); toast("已登录 " + (r.email || "")); $("#gCode").value = ""; $("#gCCU").textContent = ""; await loadLocal(); await pollStatus(); $("#btnGCCU").click(); }
   catch (e) { $("#gErr").textContent = e.message; }
   finally { $("#btnGCode").disabled = false; }
 };
-$("#btnGLogout").onclick = async () => { if (!confirm("退出 Google 登录？")) return; await api("/api/local/logout", { json: {} }); loadLocal(); };
+$("#btnGLogout").onclick = async () => { if (!await appConfirm("退出 Google 登录？")) return; await api("/api/local/logout", { json: {} }); $("#gCCU").textContent = ""; loadLocal(); pollStatus(); };
 $("#btnGCCU").onclick = async () => {
   $("#gCCU").textContent = "查询中…"; $("#gErr").textContent = "";
   try { const r = await api("/api/local/ccu", { json: {} }); $("#gCCU").textContent = `余额 ${r.balance.toFixed(2)} CU · 当前消耗 ${r.per_hour.toFixed(2)}/小时 · 运行中 ${r.assignments} 台${r.running.length ? "（" + r.running.join("、") + "）" : ""}`; }
-  catch (e) { $("#gCCU").textContent = ""; $("#gErr").textContent = e.message; }
+  catch (e) { $("#gCCU").textContent = "余额暂时无法读取"; $("#gErr").textContent = e.message; }
+  finally { pollStatus(); }
 };
 $("#btnGSmoke").onclick = async () => {
   const log = $("#gLog"); log.hidden = false; log.textContent = ""; $("#gErr").textContent = "";

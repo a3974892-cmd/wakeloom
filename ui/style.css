@@ -366,6 +366,27 @@ details.sub[open] summary::before { content: "− "; }
 .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); backdrop-filter: blur(3px); display: grid; place-items: center; z-index: 20; padding: 20px; }
 .modal-box { background: var(--panel); border: 1px solid var(--line2); border-radius: 14px; padding: 16px; max-width: min(1100px, 95vw); max-height: 92vh; overflow: auto; }
 .modal-box video, .modal-box img { max-width: 100%; max-height: 78vh; display: block; margin: 0 auto 12px; border-radius: 8px; }
+
+/* Native dialog top layer also stays above the first-run guide. */
+.wake-notice { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; border: 1px solid var(--line2); border-radius: 20px; padding: 28px; background: var(--panel); color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.22); }
+.wake-notice::backdrop { background: rgba(0,0,0,.38); backdrop-filter: blur(5px); }
+.wake-notice-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.wake-notice-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); font: 600 23px var(--font); }
+.wake-notice-close { border: 0; background: transparent; color: var(--muted); font-size: 23px; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; }
+.wake-notice-close:hover { background: var(--panel2); color: var(--text); }
+.wake-notice h2 { font-size: 20px; line-height: 1.4; margin: 0 0 10px; letter-spacing: -.4px; }
+.wake-notice p { color: var(--muted); line-height: 1.8; margin: 0; overflow-wrap: anywhere; }
+.wake-notice p { white-space: pre-line; }
+.wake-notice-input { display: grid; gap: 8px; margin-top: 20px; color: var(--muted); font-size: 12px; }
+.wake-notice-input input { width: 100%; color: var(--text); font-size: 14px; }
+.wake-notice-balance { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 18px 20px; margin-top: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); }
+.wake-notice-balance span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 7px; }
+.wake-notice-balance strong { font: 600 26px var(--mono); letter-spacing: -1px; }
+.wake-notice-balance small { font: 400 12px var(--font); color: var(--muted); letter-spacing: 0; }
+.wake-notice p.wake-notice-footnote { font-size: 11px; margin-top: 10px; }
+.wake-notice-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+.wake-notice-actions .btn { padding: 9px 17px; border-radius: 9px; }
+.wake-notice button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .plist { display: flex; flex-direction: column; gap: 6px; min-width: 520px; }
 .plist .p { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; display: flex; gap: 10px; align-items: center; }
 .plist .p .tx { flex: 1; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
