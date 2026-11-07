@@ -135,7 +135,24 @@ func newServer() http.Handler {
 	})
 	api.HandleFunc("GET /api/gate/profiles", gatePass("GET", "/_gate/profiles"))
 	api.HandleFunc("POST /api/gate/wake", gatePass("POST", "/_gate/wake"))
-	api.HandleFunc("POST /api/gate/stop", gatePass("POST", "/_gate/stop"))
+	api.HandleFunc("POST /api/gate/stop", func(w http.ResponseWriter, r *http.Request) {
+		warn := ud.beforeStop() // back up ComfyUI user data first (at most 20 s)
+		var out map[string]any
+		if err := gateJSON("POST", "/_gate/stop", map[string]any{}, &out); err != nil {
+			code := 502
+			if ge, ok := err.(*GateError); ok && ge.Status >= 400 {
+				code = ge.Status
+			}
+			jsonOut(w, code, map[string]any{"error": err.Error(), "status": code, "backup_warning": warn})
+			return
+		}
+		if out == nil {
+			out = map[string]any{}
+		}
+		out["backup_warning"] = warn
+		store.poke()
+		jsonOut(w, 200, out)
+	})
 	api.HandleFunc("POST /api/gate/extend", gatePass("POST", "/_gate/extend"))
 	api.HandleFunc("POST /api/gate/switch", gatePass("POST", "/_gate/switch"))
 	api.HandleFunc("GET /api/gate/events", sseProxy)
@@ -391,6 +408,7 @@ func newServer() http.Handler {
 	})
 
 	registerCustomModelRoutes(api)
+	registerUserdataRoutes(api)
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		k := r.Header.Get("X-Key")
@@ -534,16 +552,57 @@ func sseProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	fl, _ := w.(http.Flusher)
-	rd := bufio.NewReader(resp.Body)
-	for {
-		line, err := rd.ReadBytes('\n')
-		if len(line) > 0 {
-			w.Write(line)
-			if fl != nil && (len(line) == 1 || line[0] == '\n') {
-				fl.Flush()
+	flush := func() {
+		if fl != nil {
+			fl.Flush()
+		}
+	}
+	// whole upstream events (up to the blank line), so the app's own log lines (userdata.go) can be
+	// slotted in between events without breaking one
+	events := make(chan []byte, 64)
+	go func() {
+		defer close(events)
+		rd := bufio.NewReader(resp.Body)
+		var ev []byte
+		for {
+			line, err := rd.ReadBytes('\n')
+			ev = append(ev, line...)
+			if len(line) > 0 && (line[0] == '\n' || string(line) == "\r\n") || err != nil {
+				if len(ev) > 0 {
+					select {
+					case events <- ev:
+					case <-r.Context().Done():
+						return
+					}
+				}
+				ev = nil
+			}
+			if err != nil {
+				return
 			}
 		}
-		if err != nil {
+	}()
+	appCh, backlog, unsub := appLogSubscribe()
+	defer unsub()
+	// the gateway replays its backlog first; add ours after it has settled
+	replay := time.After(800 * time.Millisecond)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+			w.Write(ev)
+			flush()
+		case <-replay:
+			for _, l := range backlog {
+				w.Write(sseLogEvent(l))
+			}
+			flush()
+		case l := <-appCh:
+			w.Write(sseLogEvent(l))
+			flush()
+		case <-r.Context().Done():
 			return
 		}
 	}

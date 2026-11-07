@@ -541,3 +541,12 @@ details.sub[open] summary::before { content: "− "; }
   .cm-r { grid-template-columns: 20px minmax(0, 1fr) 28px; }
   .cm-r select, .cm-r input[type=number] { grid-column: 2; }
 }
+
+/* ---- ComfyUI user-data backup line (console) ---- */
+.ud-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 4px 0; font-size: 11.5px; color: var(--muted); }
+.ud-line .btn { padding-top: 2px; padding-bottom: 2px; }
+.ud-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--idle); flex: none; }
+.ud-dot.ok { background: var(--ok); }
+.ud-dot.busy { background: var(--accent); animation: pulse 1.2s infinite; }
+.ud-dot.warn { background: var(--warn); }
+.ud-line .ud-err { color: var(--warn); }

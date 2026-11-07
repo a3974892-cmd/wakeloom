@@ -302,6 +302,7 @@ func maybeAutoStop() {
 		return
 	}
 	if st, err := gateState(); err == nil && st == "ready" {
+		ud.beforeStop()
 		var out map[string]any
 		if gateJSON("POST", "/_gate/stop", nil, &out) == nil {
 			autoStopped = true

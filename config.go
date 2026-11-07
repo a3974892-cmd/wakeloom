@@ -29,7 +29,8 @@ type Config struct {
 	LocalIdleMin     int           `json:"local_idle_min"`
 	LocalMaxHours    float64       `json:"local_max_hours"`
 	UpdateURL        string        `json:"update_url"`
-	HFToken          string        `json:"hf_token"` // local mode: Hugging Face token for gated models (stays on this PC)
+	HFToken          string        `json:"hf_token"`      // local mode: Hugging Face token for gated models (stays on this PC)
+	UserdataSync     *bool         `json:"userdata_sync"` // back up / restore ComfyUI user data (nil = on)
 }
 
 var (
@@ -83,6 +84,10 @@ func loadConfig() {
 	}
 	if cfg.JobTimeoutMin <= 0 {
 		cfg.JobTimeoutMin = 30
+	}
+	if cfg.UserdataSync == nil {
+		on := true
+		cfg.UserdataSync = &on
 	}
 }
 
