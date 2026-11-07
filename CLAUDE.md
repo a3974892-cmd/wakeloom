@@ -22,6 +22,9 @@ Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，
 | `testdata/hf/` | 手工构造的 HF API 响应（测试用） |
 | `userdata.go` | 备份 / 恢复 ComfyUI 的 `user/default/`（只用 ComfyUI 自带的 userdata 接口，经 baseURL + addAuth，路径里 `/` 编码成 `%2F`）：本地 `<dataDir>/comfy-user/`（files/、manifest.json、.trash/）；每次开机先恢复一次，恢复成功后才备份和镜像删除；停止前备份最多 20 秒；启动日志行以 `WB_USERDATA ` 开头（网关模式由 server.go 的 sseProxy 插进事件流） |
 | `ui/userdata.js` | 控制台的「工作流备份」状态行 |
+| `onboarding.go` / `ui/onboarding.js` | 首次使用引导：进度与入门清单存在 config（`onboarded`、`onboard_step`、`checklist`、`cu_rates`，设置表单保存时保留这些字段）、网络检测 `/api/netcheck`、CU/小时估计（`cuRateGuess`，GPU 就绪时记住实际值）；简单路径 3 次点击开机，完整向导 7 步，功能导览气泡 |
+| `docs/GETTING_STARTED.md` | 新手指南（与引导步骤对应；截图占位在 `docs/img/`） |
+| `testdata/plans/` | 内置启动配置在「core 模型」改动前生成的计划快照，`TestBuiltinPlansUnchanged` 对比 |
 | `update.go` | 自动更新：读 GitHub Releases 的 `latest.json`，校验 SHA-256 后替换；`AppVersion` 在这里 |
 | `*_windows.go` / `*_other.go` | 平台相关（窗口、单实例、系统代理）；非 Windows 版本只是桩，便于 Linux 上测试 |
 | `rsrc_windows_amd64.syso`、`winres/` | 图标/版本资源（go-winres 生成） |
@@ -40,7 +43,7 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H wi
 
 - 可在 Linux 上测试和交叉编译（Go 1.24.7，见 go.mod）。
 - 部分测试需要环境变量（如 `JUPYTER_TEST_URL`），没设会自动跳过。
-- 调试：`CKWB_HEADLESS=1 [CKWB_PORT=xxxx] go run .` 只起本地服务、打印 URL，不开窗口。`CKWB_HF_BASE=http://127.0.0.1:端口` 可把 Hugging Face API 指到本地假服务（UI 测试用，数据见 `testdata/hf/`）。
+- 调试：`CKWB_HEADLESS=1 [CKWB_PORT=xxxx] go run .` 只起本地服务、打印 URL，不开窗口。UI 测试用的假服务地址：`CKWB_HF_BASE`（Hugging Face API，数据见 `testdata/hf/`）、`CKWB_GOOGLE_TOKEN_URL`（Google 令牌接口）、`CKWB_COLAB_BASE`（Colab `/tun/m` 接口）。空的 `HOME`/`APPDATA` 启动时会自动弹出新手引导。
 - `custom_models_test.go` 会调用 python3 + PyYAML 用 kit 的 `parse_profile` 交叉校验 Go 生成的 YAML，并比对 `MODEL_DIRS`；改目录列表或校验规则时两边要同步（Python 侧在 `gateway/src/edits.py` 的 `MODEL_DIRS` / `CUSTOM`）。
 - 图标/版本资源改动后：`go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64 --out rsrc`
 
@@ -72,5 +75,6 @@ kit 的日志输出用英文；程序界面和更新日志用中文。
 - 不要提交 exe / `dist/` / `__pycache__` / `.bak`（见 `.gitignore`）。
 - 本地模式依赖 Colab 非公开接口和 Google Cloud SDK 的公开 OAuth 客户端，改动时保持与 google-colab-cli 行为一致。
 - 1.17 改名前的数据目录是 `ComfyColabWorkbench`，`config.go` 会自动迁移；环境变量前缀仍是 `CKWB_`、module 名仍是 `ckwb`，不要随意改。
+- 自定义模型的保存规则（Go 的 `customProblem` 与网关 Python 的 `custom_problem` 必须一致）：至少有一个会被下载的模型、要么有 `ai` 块要么有 `wb_entry.template`、总大小 ≤ 86.4 GB；「任意模型」文件标 `core: true`，plan.py 只把**没有任何工作流 / smoke / ai 引用**的 core 模型加进计划（这样内置配置的计划不变）。
 - 用户数据同步的请求带 `X-WB-Sync` 头：本地网关不把它算作活动；VPS 网关没有这种开关，会算作活动，所以定时同步间隔是 5 分钟且只在就绪时运行。
 - VM 上 subprocess 输出要经 Python `print` 转发（见 setup.py 的 `sh()`），直接写 fd 1 不会出现在唤醒日志里；长时间步骤要定期打印进度，否则看起来像卡住。

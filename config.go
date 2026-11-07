@@ -31,6 +31,12 @@ type Config struct {
 	UpdateURL        string        `json:"update_url"`
 	HFToken          string        `json:"hf_token"`      // local mode: Hugging Face token for gated models (stays on this PC)
 	UserdataSync     *bool         `json:"userdata_sync"` // back up / restore ComfyUI user data (nil = on)
+	// first-run guide (onboarding.go); not part of the settings form, kept across settings saves
+	Onboarded       bool               `json:"onboarded"`
+	OnboardStep     string             `json:"onboard_step,omitempty"`
+	Checklist       map[string]int64   `json:"checklist,omitempty"` // item -> unix time done (-1 = skipped for an existing user)
+	ChecklistHidden bool               `json:"checklist_hidden,omitempty"`
+	CURates         map[string]float64 `json:"cu_rates,omitempty"` // real CU/hour seen per GPU
 }
 
 var (

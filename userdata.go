@@ -596,12 +596,16 @@ func sessionKey(st map[string]any) string {
 // tick: restore once per boot, then back up every udInterval while the GPU is ready.
 func (u *udSyncer) tick(ctx context.Context) {
 	if !userdataEnabled() {
+		if st, err := u.status(); err == nil {
+			learnCURate(st)
+		}
 		return
 	}
 	st, err := u.status()
 	if err != nil || fmt.Sprint(st["state"]) != "ready" {
 		return
 	}
+	learnCURate(st) // piggyback: remember what this GPU really costs (onboarding.go)
 	u.init()
 	key := sessionKey(st)
 	u.mu.Lock()

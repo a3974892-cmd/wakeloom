@@ -48,6 +48,9 @@
       </div>
       <div class="top-r">
         <button class="btn xs upd-btn" id="btnUpd" hidden></button>
+        <div class="help-wrap"><button class="btn ghost xs help-btn" id="btnHelp" title="帮助">?</button>
+          <div class="help-menu" id="helpMenu" hidden>
+            <button id="helpGuide">新手引导</button><button id="helpReadme">使用说明（GitHub README）</button><button id="helpNet">检查网络</button></div></div>
         <button class="btn primary sm" id="btnWakeTop">唤醒 GPU</button>
         <button class="btn danger sm" id="btnStopTop">停止</button>
       </div>
@@ -55,6 +58,7 @@
 
     <!-- 控制台 -->
     <section class="page on" id="page-console">
+      <div class="card ob-check" id="obChecklist" hidden></div>
       <div class="console">
         <div class="col">
           <div class="sec-h"><span class="n">01</span><b>GPU 会话</b><span class="d">唤醒、计时与算力</span></div>
@@ -94,6 +98,7 @@
 
             <div class="actions">
               <button class="btn primary" id="btnWake">唤醒 GPU</button>
+              <span class="muted small wake-cost" id="wakeCost"></span>
               <button class="btn" id="btnOpenComfy">打开 ComfyUI ↗</button>
               <button class="btn" id="btnExtend">延长会话</button>
               <span class="grow"></span>
@@ -367,6 +372,7 @@
         <div class="card">
           <label class="fld">更新地址（latest.json）<input name="update_url" id="updUrl" placeholder=""></label>
           <div class="row gap wrap"><button type="button" class="btn sm" id="btnUpdCheck">检查更新</button><span class="muted small" id="updMsg"></span></div>
+          <div class="row gap wrap" style="margin-top:12px"><button type="button" class="btn sm" id="btnRerunGuide">重新运行新手引导</button><span class="muted small">从头走一遍：检查网络、连接方式、登录、第一次试用</span></div>
         </div>
 
         <div class="save-bar"><button class="btn primary" type="submit">保存</button><button type="button" class="btn" id="btnTest">测试连接</button><span id="setMsg" class="muted small"></span><span class="grow"></span><span class="muted small mono" id="dataDirText"></span></div>
@@ -377,9 +383,13 @@
 
 <div class="modal" id="modal" hidden><div class="modal-box" id="modalBox"></div></div>
 <div class="toast" id="toast"></div>
+<div class="ob" id="ob" hidden></div>
+<div class="ob-mini" id="obMini" hidden></div>
+<div class="ob-coach" id="obCoach" hidden></div>
 <script src="app.js"></script>
 <script src="ai.js"></script>
 <script src="models.js"></script>
 <script src="userdata.js"></script>
+<script src="onboarding.js"></script>
 </body>
 </html>

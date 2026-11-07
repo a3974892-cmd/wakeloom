@@ -5,6 +5,8 @@ A Windows desktop workbench that wakes a Colab GPU on demand and turns it into a
 
 [English](#english) · [下载](#下载) · [更新日志](CHANGELOG.md)
 
+> **第一次使用？看 [新手指南](docs/GETTING_STARTED.md)。** 软件第一次打开时也会自动带你走一遍：用 Google 账号登录，点三下就能开机。
+
 ---
 
 ## 它能做什么
@@ -26,7 +28,11 @@ A Windows desktop workbench that wakes a Colab GPU on demand and turns it into a
 
 到 [Releases](../../releases/latest) 下载最新的 `Wakeloom-x.y.z.exe`，双击运行即可（单文件，无需安装；需要 Windows 10/11 自带的 WebView2）。
 
-> 安装包没有代码签名，首次运行 Windows 可能提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
+> 安装包没有代码签名，首次运行 Windows 可能提示「Windows 已保护你的电脑」（SmartScreen）：点 **更多信息**，再点 **仍要运行**。
+>
+> ![SmartScreen：更多信息 → 仍要运行](docs/img/smartscreen.png)
+
+**校验文件（可选）：** Release 里的 `latest.json` 写着 exe 的 `sha256`。在下载目录打开 PowerShell 运行 `Get-FileHash .\Wakeloom-x.y.z.exe -Algorithm SHA256`（或命令提示符 `certutil -hashfile Wakeloom-x.y.z.exe SHA256`），两边的值应该完全一样。
 
 ## 你需要准备什么
 
@@ -77,6 +83,7 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H wi
 ui/             界面（HTML / CSS / JS，编译进 exe）
 kit/            上传到 Colab 的启动套件（来自 comfy-colab-kit，MIT）与内置启动配置
 gateway/        给 comfy-colab-kit 网关打的一键补丁及其源码
+docs/           新手指南（截图位置待补：docs/img/）
 ```
 
 ## 致谢

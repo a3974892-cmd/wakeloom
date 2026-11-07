@@ -645,6 +645,7 @@ func download(j *Job, outputs map[string]map[string]any) {
 	}
 	store.update(j, func(j *Job) {
 		j.Outputs, j.Status, j.Finished = outs, "done", time.Now().Unix()
+		go markChecklist("generate")
 		j.Message = fmt.Sprintf("完成，已保存 %d 个文件", len(outs))
 	})
 }

@@ -74,6 +74,9 @@ func newServer() http.Handler {
 		if c.HFToken == "********" {
 			c.HFToken = old.HFToken
 		}
+		// the settings form does not carry the guide's state
+		c.Onboarded = old.Onboarded || c.Onboarded
+		c.OnboardStep, c.Checklist, c.ChecklistHidden, c.CURates = old.OnboardStep, old.Checklist, old.ChecklistHidden, old.CURates
 		c.HFToken = strings.TrimSpace(c.HFToken)
 		for i, p := range c.LLMs {
 			if p.ID == "" {
@@ -132,6 +135,7 @@ func newServer() http.Handler {
 			errOut(w, 502, err)
 			return
 		}
+		markChecklist("login")
 		jsonOut(w, 200, st)
 	})
 	api.HandleFunc("GET /api/gate/profiles", gatePass("GET", "/_gate/profiles"))
@@ -147,7 +151,11 @@ func newServer() http.Handler {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(b))
-		wakePass(w, r)
+		rec := &statusRecorder{ResponseWriter: w, code: 200}
+		wakePass(rec, r)
+		if rec.code < 300 {
+			markChecklist("wake")
+		}
 	})
 	api.HandleFunc("POST /api/gate/stop", func(w http.ResponseWriter, r *http.Request) {
 		warn := ud.beforeStop() // back up ComfyUI user data first (at most 20 s)
@@ -164,6 +172,7 @@ func newServer() http.Handler {
 			out = map[string]any{}
 		}
 		out["backup_warning"] = warn
+		markChecklist("stop")
 		store.poke()
 		jsonOut(w, 200, out)
 	})
@@ -424,6 +433,7 @@ func newServer() http.Handler {
 
 	registerCustomModelRoutes(api)
 	registerUserdataRoutes(api)
+	registerOnboardingRoutes(api)
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		k := r.Header.Get("X-Key")
@@ -779,3 +789,11 @@ func openBrowser(u string) {
 		exec.Command("xdg-open", u).Start()
 	}
 }
+
+// statusRecorder remembers the status code a wrapped handler wrote.
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+func (s *statusRecorder) WriteHeader(c int) { s.code = c; s.ResponseWriter.WriteHeader(c) }

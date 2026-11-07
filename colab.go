@@ -17,13 +17,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 )
 
-var colabDomain = "https://colab.research.google.com"
+var colabDomain = firstNonEmpty(strings.TrimRight(os.Getenv("CKWB_COLAB_BASE"), "/"), "https://colab.research.google.com") // CKWB_COLAB_BASE: UI tests
 
 type ColabError struct {
 	Status int

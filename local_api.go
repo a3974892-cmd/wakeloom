@@ -29,6 +29,7 @@ func localRoutes(api *http.ServeMux) {
 			errOut(w, 400, err)
 			return
 		}
+		markChecklist("login")
 		jsonOut(w, 200, map[string]any{"email": email})
 	})
 	api.HandleFunc("POST /api/local/logout", func(w http.ResponseWriter, r *http.Request) {

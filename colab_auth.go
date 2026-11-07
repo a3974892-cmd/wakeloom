@@ -27,8 +27,10 @@ const (
 	gClientSecret = "d-FL95Q19q7MQmFpd7hHD0Ty"
 	gRedirect     = "https://sdk.cloud.google.com/applicationdefaultauthcode.html"
 	gAuthURL      = "https://accounts.google.com/o/oauth2/auth"
-	gTokenURL     = "https://oauth2.googleapis.com/token"
 )
+
+// gTokenURL can be pointed at a fake server for UI tests (CKWB_GOOGLE_TOKEN_URL, like CKWB_HF_BASE).
+var gTokenURL = firstNonEmpty(os.Getenv("CKWB_GOOGLE_TOKEN_URL"), "https://oauth2.googleapis.com/token")
 
 var gScopes = []string{
 	"openid",
