@@ -417,6 +417,12 @@ func submit(j *Job) bool {
 			return false
 		}
 	}
+	if strings.HasPrefix(t.ID, "ai-") {
+		if err := checkImageModels(g); err != nil {
+			fail(j, err.Error())
+			return false
+		}
+	}
 	keys := make([]string, 0, len(j.Uploads))
 	for k := range j.Uploads {
 		keys = append(keys, k)

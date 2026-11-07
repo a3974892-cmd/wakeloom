@@ -65,7 +65,7 @@ function aiModelReady() {
   const p = aiCurrent();
   if (!p || !gst || gst.state !== "ready" || !AI.info || AI.info.error) return false;
   if (p.ai.type === "llm") return !!(AI.info.ready && AI.info.llm_up);
-  return true;
+  return AI.info.ready === true;
 }
 
 // ---- profile picker ----
@@ -114,7 +114,7 @@ async function aiWake(pid) {
   const acc = p.accelerator || "";
   const accSel = $("#wakeAcc");
   const canAcc = accSel && !accSel.disabled && !$("#accWrap").hidden;
-  if (!confirm(`用「${(p.ai && p.ai.title) || p.title}」唤醒 GPU？\n\n要下载约 ${p.size_gb_default ?? "?"} GB 模型${canAcc && acc ? `，GPU 用 ${acc}` : ""}。`)) return;
+  if (!await appConfirm(`用「${(p.ai && p.ai.title) || p.title}」唤醒 GPU？\n\n要下载约 ${p.size_gb_default ?? "?"} GB 模型${canAcc && acc ? `，GPU 用 ${acc}` : ""}。`)) return;
   $("#wakeProfile").value = pid;
   $("#wakeProfile").dispatchEvent(new Event("change"));
   if (canAcc && acc && [...accSel.options].some(o => o.value === acc)) accSel.value = acc;
@@ -158,9 +158,9 @@ function aiConvList() {
   box.innerHTML = AI.convs.length ? AI.convs.map(c => `<div class="ai-conv ${c.id === AI.cur ? "on" : ""}" data-cid="${c.id}"><span>${esc(c.title || "新对话")}</span><button class="x" data-cdel="${c.id}" title="删除">×</button></div>`).join("")
     : `<p class="muted small ai-conv-empty">还没有对话</p>`;
   $$("[data-cid]", box).forEach(el => el.onclick = e => { if (e.target.dataset.cdel) return; if (AI.busy) return; AI.cur = el.dataset.cid; aiSaveConvs(); aiConvList(); aiMsgs(); });
-  $$("[data-cdel]", box).forEach(b => b.onclick = () => {
+  $$("[data-cdel]", box).forEach(b => b.onclick = async () => {
     if (AI.busy && AI.cur === b.dataset.cdel) return;
-    if (!confirm("删除这个对话？")) return;
+    if (!await appConfirm("删除这个对话？")) return;
     AI.convs = AI.convs.filter(c => c.id !== b.dataset.cdel);
     if (AI.cur === b.dataset.cdel) AI.cur = AI.convs[0] ? AI.convs[0].id : "";
     aiSaveConvs(); aiConvList(); aiMsgs();

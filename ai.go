@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -28,6 +28,10 @@ func (p *LocalProfile) aiSummary() map[string]any {
 	dest := map[string]string{}
 	for _, m := range p.Models {
 		dest[m.ID] = m.Dest
+	}
+	modelName := func(mid string) string {
+		_, relative, _ := strings.Cut(dest[mid], "/")
+		return relative // Preserve subfolders, matching ComfyUI's loader names.
 	}
 	sub, _ := p.AI[kind].(map[string]any)
 	if sub == nil {
@@ -70,12 +74,12 @@ func (p *LocalProfile) aiSummary() map[string]any {
 				return nil
 			}
 			im["clip"], im["vae"] = clip, vae
-			im["unet_name"], im["clip_name"], im["vae_name"] = path.Base(dest[mid]), path.Base(dest[clip]), path.Base(dest[vae])
+			im["unet_name"], im["clip_name"], im["vae_name"] = modelName(mid), modelName(clip), modelName(vae)
 			uses = append(uses, clip, vae)
 			im["width"], im["height"], im["steps"], im["cfg"] = int(num("width", 1024)), int(num("height", 1024)), int(num("steps", 26)), num("cfg", 3.8)
 			im["sampler"], im["scheduler"] = str("sampler", "euler"), str("scheduler", "beta")
 		} else {
-			im["checkpoint"] = path.Base(dest[mid])
+			im["checkpoint"] = modelName(mid)
 			im["width"], im["height"], im["steps"], im["cfg"] = int(num("width", 1024)), int(num("height", 1024)), int(num("steps", 30)), num("cfg", 5)
 			im["sampler"], im["scheduler"] = str("sampler", "dpmpp_sde"), str("scheduler", "karras")
 		}
@@ -143,7 +147,78 @@ func aiInfoHandler(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 200, map[string]any{"error": msg, "status": resp.StatusCode})
 		return
 	}
+	if out["type"] == "image" {
+		im, _ := out["image"].(map[string]any)
+		graph := imageLoaderGraph(im)
+		if err := checkImageModels(graph); err != nil {
+			out["ready"], out["error"] = false, err.Error()
+		} else {
+			out["ready"] = true
+		}
+	}
 	jsonOut(w, 200, out)
+}
+
+func imageLoaderGraph(im map[string]any) map[string]map[string]any {
+	graph := map[string]map[string]any{}
+	fields := map[string]string{"CheckpointLoaderSimple": "ckpt_name"}
+	values := map[string]any{"ckpt_name": im["checkpoint"]}
+	if im["arch"] == "chroma" {
+		fields = map[string]string{"UNETLoader": "unet_name", "CLIPLoader": "clip_name", "VAELoader": "vae_name"}
+		values = im
+	}
+	for class, field := range fields {
+		graph[class] = map[string]any{"class_type": class, "inputs": map[string]any{field: values[field]}}
+	}
+	return graph
+}
+
+// Check the running ComfyUI's loader lists, not just a profile's declared files.
+// Used for old VMs too, before submitting a prompt which would otherwise fail validation.
+func checkImageModels(graph map[string]map[string]any) error {
+	fields := map[string]string{"UNETLoader": "unet_name", "CLIPLoader": "clip_name", "VAELoader": "vae_name", "CheckpointLoaderSimple": "ckpt_name"}
+	ids := make([]string, 0, len(graph))
+	for id := range graph {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		n := graph[id]
+		class, _ := n["class_type"].(string)
+		field := fields[class]
+		if field == "" {
+			continue
+		}
+		inputs, _ := n["inputs"].(map[string]any)
+		wanted, _ := inputs[field].(string)
+		if wanted == "" {
+			return errors.New("生图模板缺少模型名称，请回到 AI 页重新创建任务")
+		}
+		var info map[string]struct {
+			Input struct {
+				Required map[string][]json.RawMessage `json:"required"`
+			} `json:"input"`
+		}
+		if err := gateJSON("GET", "/object_info/"+class, nil, &info); err != nil {
+			return fmt.Errorf("无法核对 GPU 上的模型，请检查连接后重试：%w", err)
+		}
+		definition := info[class].Input.Required[field]
+		var names []string
+		if len(definition) == 0 || json.Unmarshal(definition[0], &names) != nil {
+			return fmt.Errorf("GPU 上的 ComfyUI 未提供 %s 模型列表，请检查启动日志", class)
+		}
+		found := false
+		for _, name := range names {
+			if strings.ReplaceAll(name, "\\", "/") == strings.ReplaceAll(wanted, "\\", "/") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("GPU 上未找到模型 %s（%s 可用模型 %d 个）。请查看启动日志的模型下载结果，使用对应的生图配置重新唤醒；这不是显存不足错误", wanted, class, len(names))
+		}
+	}
+	return nil
 }
 
 // aiChatHandler streams Ollama's NDJSON chat response straight through to the page.
@@ -256,7 +331,7 @@ func aiImageTemplateHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		g, keys = sdxlGraph(in.Checkpoint, in.Negative, in.Width, in.Height, in.Steps, in.CFG, in.Sampler, in.Scheduler), sdxlKeys
 	}
-	t := &Template{ID: id, Name: "AI 生图 · " + firstNonEmpty(in.Title, in.Profile), Created: time.Now().Unix(), Graph: g}
+	t := &Template{ID: id, Name: "AI 生图 · " + firstNonEmpty(in.Title, in.Profile), Created: time.Now().Unix(), Graph: g, Profile: in.Profile}
 	if old, err := loadTemplate(id); err == nil {
 		t.Created, t.Hidden = old.Created, old.Hidden
 	}

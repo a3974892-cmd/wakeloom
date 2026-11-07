@@ -117,9 +117,9 @@ function obLoginHTML() {
 function obCCUHTML() {
   const c = OB.ccu;
   if (!c) return `<p class="muted small" id="obCCU"><span class="spin"></span> 正在查询 CU 余额…</p>`;
-  if (c.error) return `<p class="muted small">CU 余额暂时查不到：${esc(c.error)}</p>`;
+  if (c.error) return `<p class="muted small">CU 余额暂时查不到（不代表余额为 0）：${esc(c.error)} <button class="btn sm" id="obRetryCCU">重试查询</button></p>`;
   const r = obRate("G4"), hours = r ? c.balance / r : 0;
-  if (c.balance < 5) return `<p class="warn-note">CU 余额 ${c.balance.toFixed(1)}，不够开机。<a href="#" data-url="${OB_LINKS.buy}">去购买 Colab 算力 →</a></p>`;
+  if (c.balance < 5) return `<p class="warn-note">CU 余额 ${c.balance.toFixed(1)}，可用时长较短，请留意消耗。<a href="#" data-url="${OB_LINKS.buy}">购买 Colab 算力 →</a></p>`;
   return `<p class="muted">CU 余额 <b>${c.balance.toFixed(1)}</b>${OB.path === "full" ? ` · 约可用 ${hours.toFixed(0)} 小时（按 G4 估算）` : ""}</p>`;
 }
 
@@ -141,7 +141,7 @@ function obSimpleStep() {
         <span class="muted small">第一次要下载约 ${c.size ?? "?"} GB 模型 · 闲置 30 分钟自动停机</span></div>
       ${obCCUHTML()}
       ${c.have ? "" : `<p class="warn-note">没找到 RealVisXL 启动配置。网关模式需要先给网关打 gate-ai.py 补丁。</p>`}
-      <button class="btn primary xl" id="obLaunch" ${OB.ccu && OB.ccu.balance < 1 ? "disabled" : ""}>启动 Colab</button>
+      <button class="btn primary xl" id="obLaunch">启动 Colab</button>
       <p class="muted small">点了就开始计费，用完记得「停止」</p></div>`;
 }
 
@@ -207,6 +207,7 @@ function obBind() {
   on("obTour", () => { obClose(true); obCoach(OB_TOUR_FULL); });
   on("obGateTest", obGateTest);
   on("obSmoke", obSmoke);
+  on("obRetryCCU", obCCU);
   const code = $("#obCode"); if (code) code.onpaste = () => setTimeout(() => obLogin(code.value), 30);
   $$("#ob [data-mode]").forEach(b => b.onclick = async () => { await obSetMode(b.dataset.mode); obGo(4); });
   if (OB.step === 2 && OB.path === "full" && !OB.net && !OB.netBusy) obNet();
@@ -265,9 +266,15 @@ async function obLogin(code) {
 }
 
 async function obCCU() {
+  if (OB.ccuBusy) return;
+  OB.ccuBusy = true;
   OB.ccu = null;
-  try { const r = await api("/api/local/ccu", { json: {} }); OB.ccu = { balance: r.balance || 0, per_hour: r.per_hour }; }
-  catch (e) { OB.ccu = { error: e.message, balance: 99 }; }
+  try {
+    const r = await api("/api/local/ccu", { json: {} });
+    if (!Number.isFinite(r.balance)) throw new Error("Colab 未返回有效余额");
+    OB.ccu = { balance: r.balance, per_hour: r.per_hour };
+  } catch (e) { OB.ccu = { error: e.message, balance: null }; }
+  finally { OB.ccuBusy = false; }
   obRender();
 }
 
@@ -280,7 +287,7 @@ async function obLaunch() { // click 3: wake RealVisXL on L4, go to the AI page'
     $("#wakeProfile").value = p.id; $("#wakeProfile").dispatchEvent(new Event("change"));
     const acc = $("#wakeAcc");
     if (acc && !acc.disabled && [...acc.options].some(o => o.value === p.accelerator)) { acc.value = p.accelerator || OB_GPU; acc.dataset.touched = "1"; }
-    await wake();
+    if (!await wake()) { if (b) { b.disabled = false; b.textContent = "启动 Colab"; } return; }
   } catch (e) { if (b) { b.disabled = false; b.textContent = "启动 Colab"; } return toast("启动失败：" + e.message); }
   await obSave({ onboarded: true, step: "coach" });
   obClose(false);

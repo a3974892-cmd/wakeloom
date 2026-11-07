@@ -1179,6 +1179,35 @@ def _ollama_create(name, mf, path, every=10):
 def ai_finish(prep):
     """After the downloads: register the GGUF with Ollama and load it onto the GPU."""
     ai = PLAN.get("ai") or {}
+    if ai.get("type") == "image":
+        with Stage("image_models"):
+            wanted = set(ai.get("models") or [])
+            for m in PLAN["models"]:
+                if m["id"] not in wanted:
+                    continue
+                path = f"{COMFY}/models/{m['dest']}"
+                if not os.path.isfile(path) or os.path.getsize(path) == 0:
+                    raise RuntimeError(f"Image model file missing or empty after download: {m['dest']}")
+                print(f"verified image model: {m['dest']}", flush=True)
+            im = ai["image"]
+            loaders = [("CheckpointLoaderSimple", "ckpt_name", im.get("checkpoint"))]
+            if im.get("arch") == "chroma":
+                loaders = [("UNETLoader", "unet_name", im.get("unet_name")),
+                           ("CLIPLoader", "clip_name", im.get("clip_name")),
+                           ("VAELoader", "vae_name", im.get("vae_name"))]
+            for cls, field, name in loaders:
+                url = f"http://127.0.0.1:{PORT}/object_info/{cls}"
+                with urllib.request.urlopen(url, timeout=20) as r:
+                    node = json.load(r)
+                names = node.get(cls, {}).get("input", {}).get("required", {}).get(field, [[]])[0]
+                if not name or name not in names:
+                    raise RuntimeError(f"ComfyUI cannot find image model {name} in {cls} ({len(names)} available)")
+            with open(AI_INFO) as f:
+                info = json.load(f)
+            info["ready"] = True
+            with open(AI_INFO, "w") as f:
+                json.dump(info, f)
+        return
     if ai.get("type") != "llm" or not prep:
         return
     t, box = prep

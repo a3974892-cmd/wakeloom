@@ -66,9 +66,9 @@ function cmRenderSettings() {
 
 async function cmDelete(id) {
   const it = CM.items.find(x => x.id === id);
-  if (!confirm(`删除自定义模型「${it ? it.title : id}」？\n\n只删除启动配置，不影响已生成的结果。`)) return;
+  if (!await appConfirm(`删除自定义模型「${it ? it.title : id}」？\n\n只删除启动配置，不影响已生成的结果。`)) return;
   try { await api("/api/custom-models/" + encodeURIComponent(id), { method: "DELETE" }); toast("已删除"); }
-  catch (e) { return alert("删除失败：" + e.message); }
+  catch (e) { return await appAlert("删除失败：" + e.message); }
   await cmRefreshAll();
 }
 
