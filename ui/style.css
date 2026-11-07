@@ -550,3 +550,7 @@ details.sub[open] summary::before { content: "− "; }
 .ud-dot.busy { background: var(--accent); animation: pulse 1.2s infinite; }
 .ud-dot.warn { background: var(--warn); }
 .ud-line .ud-err { color: var(--warn); }
+
+/* imported prompt guide row (settings → 大模型 API) */
+.guide-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 12px 0 6px; border-top: 1px dashed var(--line2); font-size: 13px; }
+.guide-row .grow { flex: 1 1 320px; }

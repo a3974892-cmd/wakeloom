@@ -53,6 +53,8 @@ AI 页的模型来自第三方，使用时请遵守各自的许可证：
 | Chroma1-HD | [lodestones](https://huggingface.co/lodestones/Chroma1-HD) | Apache-2.0 |
 | MiniMax H3 | [Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3) | MiniMax H3 社区许可 |
 
+> MiniMax H3 社区许可的适用地区不包括美国、英国、欧盟和韩国，请自行确认你所在地区是否适用。Wakeloom 不附带 MiniMax 官方的 H3 提示词指南；如需使用，请自行从 MiniMax 官方获取并在「设置 → 大模型 API」中导入。
+
 部分模型没有内容过滤。请遵守法律、模型许可证和 [Colab 使用条款](https://research.google.com/colaboratory/faq.html)，不要生成违法内容、未经同意的真实人物内容或任何涉及未成年人的不当内容。
 
 ## 从源码构建
@@ -75,7 +77,6 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H wi
 ui/             界面（HTML / CSS / JS，编译进 exe）
 kit/            上传到 Colab 的启动套件（来自 comfy-colab-kit，MIT）与内置启动配置
 gateway/        给 comfy-colab-kit 网关打的一键补丁及其源码
-prompts/        AI 写提示词用的系统提示
 ```
 
 ## 致谢

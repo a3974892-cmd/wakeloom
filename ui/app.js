@@ -562,45 +562,45 @@ let lastTextarea = null;
 function d2(n) { return Number(n).toFixed(2); }
 function skeleton(mode, dur) {
   const D = d2(dur);
-  const body = `integrated_multimodal_description: [Shot 1] Live-action, cinematic, a medium-wide shot frames ___. The camera pushes in with small amplitude at slow speed as ___.
+  const body = `integrated_multimodal_description: [Shot 1] Realistic film look. Medium-wide view of ___; slow, gentle move closer while ___.
 
 overall_soundscape: ___
 
 non_diegetic_music: N/A`;
   switch (mode) {
     case "T2VA": return body;
-    case "I2VA": return `For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+    case "I2VA": return `<Picture 1> is the opening frame ([Shot 1], 0.00 s).
 
-integrated_multimodal_description: [Shot 1] Live-action, cinematic, the ___ shown in <Picture 1> remains ___, preserving appearance, clothing, position and the scene layout. The camera ___ as ___.
-
-overall_soundscape: ___
-
-non_diegetic_music: N/A`;
-    case "FL2VA": return `How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the ${D}-second mark of the target video.
-
-integrated_multimodal_description: [Shot 1] Live-action, cinematic, ___ begins in the position and framing established by Picture 1. The camera ___ as ___, and settles into the pose, spacing, and composition established by Picture 2 at the end of the shot.
+integrated_multimodal_description: [Shot 1] Realistic film look. Starting from <Picture 1>: ___ (keep the same people, outfits and room). Camera: ___ while ___.
 
 overall_soundscape: ___
 
 non_diegetic_music: N/A`;
-    case "L2VA": return `How the reference pictures align with the target video — <Picture 1> (from [Shot 1]) aligns with the ${D}-second mark of the target video.
+    case "FL2VA": return `Picture 1 is the opening frame (0.00 s) and Picture 2 the closing frame (${D} s) of [Shot 1].
 
-integrated_multimodal_description: [Shot 1] Live-action, cinematic, a ___ shot begins with ___. The camera ___ as ___. Toward the end, ___ settles into the exact arrangement, camera angle, lighting, and final composition established by <Picture 1>.
+integrated_multimodal_description: [Shot 1] Realistic film look. Opens as in Picture 1: ___. Camera: ___ while ___, ending exactly as in Picture 2.
+
+overall_soundscape: ___
+
+non_diegetic_music: N/A`;
+    case "L2VA": return `<Picture 1> is the closing frame of [Shot 1] (${D} s).
+
+integrated_multimodal_description: [Shot 1] Realistic film look. ___ view of ___ at the start. Camera: ___ while ___. By the end everything matches <Picture 1>.
 
 overall_soundscape: ___
 
 non_diegetic_music: N/A`;
     case "Ref2VA": return `subject_definitions:
-<Subject 1> is the ___ in <Picture 1>, with ___.
+<Subject 1> = the ___ from <Picture 1> (___).
 
 summary:
-[reference generation] The target video shows <Subject 1> ___.
+<Subject 1> ___.
 
 retention_analysis:
-<Subject 1> (appears in [Shot 1]): fully_preserved - ___ are retained.
+<Subject 1>, [Shot 1]: keep ___.
 
 detailed_description:
-The target video uses a ___ style with ___ lighting.
+Style ___, light ___.
 [Shot 1] ___
 
 overall_soundscape:
@@ -611,19 +611,19 @@ N/A`;
   }
 }
 const SNIPS = [
-  ["新镜头", () => `[Shot 2] At 00:0${Math.min(9, Math.floor(+$("#h3Dur").value / 2))}.000, the camera cuts to `],
-  ["台词", () => `the ___ with a ___ voice (S1) says: <d>[中文] </d>`],
-  ["画外音", () => `(S1) says in an off-screen voiceover: <d>[中文] </d> while his lips remain completely closed.`],
-  ["推近", () => "The camera pushes in with small amplitude at slow speed toward "],
-  ["拉远", () => "The camera pulls out with small amplitude at slow speed, "],
-  ["跟拍", () => "The camera follows in a tracking shot as "],
-  ["环绕", () => "The camera moves in an arc shot around "],
-  ["横移", () => "The camera trucks right with small amplitude at slow speed as "],
-  ["摇镜", () => "The camera pans right with large amplitude at fast speed, revealing "],
-  ["固定", () => "The camera holds a static shot as "],
-  ["升降", () => "The camera pedestals up at slow speed, "],
-  ["手持晃动", () => "The camera shakes slightly as "],
-  ["屏幕文字", () => `a sign reading "___" `],
+  ["新镜头", () => `[Shot 2] Cut at ${Math.min(9, Math.floor(+$("#h3Dur").value / 2))} s to `],
+  ["台词", () => `(S1), speaking in a ___ voice: <d>[中文] </d>`],
+  ["画外音", () => `(S1) off screen, mouth closed on camera: <d>[中文] </d>`],
+  ["推近", () => "Slow, gentle move closer toward "],
+  ["拉远", () => "Slow, gentle move back, "],
+  ["跟拍", () => "Camera travels alongside as "],
+  ["环绕", () => "Camera circles around "],
+  ["横移", () => "Camera glides sideways to the right as "],
+  ["摇镜", () => "Quick turn of the camera to the right shows "],
+  ["固定", () => "Camera stays still while "],
+  ["升降", () => "Camera rises slowly, "],
+  ["手持晃动", () => "Slight handheld wobble as "],
+  ["屏幕文字", () => `visible text "___" `],
   ["<Picture 1>", () => "<Picture 1>"],
   ["<Subject 1>", () => "<Subject 1>"],
 ];
@@ -984,6 +984,31 @@ function llmForm(idx) {
 }
 $("#btnLLMAdd").onclick = () => llmForm(null);
 
+// ---- imported H3 prompt guide (only on this PC; the official guide is not shipped with Wakeloom) ----
+let guideInfo = { imported: false };
+async function loadGuide() {
+  try { guideInfo = await api("/api/prompt-guide"); } catch { }
+  $("#guideState").textContent = guideInfo.imported ? `已导入 · ${fmtSize(guideInfo.size)} · ${fmtTime(guideInfo.modified)}` : "未导入（使用内置通用说明）";
+  $("#btnGuideClear").hidden = !guideInfo.imported;
+  $("#btnGuideImport").textContent = guideInfo.imported ? "重新导入" : "导入 H3 提示词指南";
+}
+$("#btnGuideImport").onclick = () => $("#guideFile").click();
+$("#guideFile").onchange = async () => {
+  const f = $("#guideFile").files[0]; $("#guideFile").value = "";
+  if (!f) return;
+  if (!/\.(md|txt)$/i.test(f.name)) return toast("只支持 .md 或 .txt 文件");
+  if (f.size > 1 << 20) return toast("文件太大（最大 1 MB）");
+  try { await api("/api/prompt-guide", { json: { name: f.name, text: await f.text() } }); toast("已导入，AI 写提示词会按它输出"); }
+  catch (e) { toast("导入失败：" + e.message); }
+  loadGuide();
+};
+$("#btnGuideClear").onclick = async () => {
+  if (!confirm("清除导入的 H3 提示词指南？之后改用内置通用说明。")) return;
+  await api("/api/prompt-guide", { method: "DELETE" }).catch(e => toast(e.message));
+  loadGuide();
+};
+loadGuide();
+
 // ---------------- AI prompt writer ----------------
 let aiCtl = null, aiState = { tab: "new", idea: "", instr: "", withImg: true };
 async function formImages() {
@@ -1012,7 +1037,7 @@ $("#btnAI").onclick = async () => {
       <textarea id="aiIn" placeholder=""></textarea>
       ${imgs.length ? `<label class="chk" style="margin:0"><input type="checkbox" id="aiImg" ${aiState.withImg ? "checked" : ""}>附带表单里的 ${imgs.length} 张图（让模型看图写）</label><div class="ai-thumbs">${imgs.map(u => `<img src="${u}">`).join("")}</div>` : `<p class="hint" style="margin:0">首帧 / 尾帧模式下，先在表单里放好图片，这里就能让模型看图来写。</p>`}
       <div class="ai-row"><button type="button" class="btn primary" id="aiGo">生成</button><button type="button" class="btn" id="aiStop" hidden>停止</button></div>
-      <p class="hint" style="margin:0">按 MiniMax H3 官方格式输出：镜头、运镜、台词、环境音、配乐。时长和模式取自生成页的设置。</p>
+      <p class="hint" style="margin:0">写出镜头、运镜、台词、环境音、配乐。时长和模式取自生成页的设置。${guideInfo.imported ? "按你导入的 H3 指南输出。" : "使用内置通用说明（可在设置里导入 H3 官方指南）。"}</p>
     </div>
     <div class="ai-out">
       <div class="ai-meta" id="aiMeta"></div>

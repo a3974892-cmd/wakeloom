@@ -10,13 +10,40 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-//go:embed prompts/h3_guide.md
-var h3Guide string
+// builtinPromptGuide is Wakeloom's own short, generic advice for writing video prompts. The official MiniMax
+// H3 prompt guide is not shipped (its community license limits where it may be redistributed): users who
+// have it can import it in settings, and it is then used instead (see userGuidePath).
+const builtinPromptGuide = `You write prompts for an AI model that turns a text description (and optional reference pictures) into a short video with sound.
+
+Think like a director and make every sentence something a camera could film:
+- Subject: who or what is on screen; looks, clothing, expression, position in the frame.
+- Action: what happens, in order, at a pace that fits the requested length. Avoid too many events for a short clip.
+- Camera: shot size and angle, how the camera moves (or stays still) and how fast; say clearly where one shot ends and the next begins.
+- Light and look: time of day, light direction and quality, colours, overall visual style.
+- Sound: background ambience, sound effects, spoken lines with the speaker, and whether there is music.
+
+With reference pictures, say what each picture is for (opening frame, closing frame, or what a character or place should look like) and keep what is visible in them consistent.
+Prefer concrete nouns and verbs over adjectives; do not describe things the viewer cannot see or hear.`
+
+const guideMaxBytes = 1 << 20
+
+func userGuidePath() string { return filepath.Join(dataDir, "prompts", "h3_guide.md") }
+
+// promptGuide returns the imported guide if there is one, else the built-in advice.
+func promptGuide() (text string, imported bool) {
+	if b, err := os.ReadFile(userGuidePath()); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+		return string(b), true
+	}
+	return builtinPromptGuide, false
+}
 
 // LLMProvider is one configured model endpoint. Kind: "openai" (any OpenAI-compatible API),
 // "anthropic" or "gemini".
@@ -361,7 +388,7 @@ var modeHint = map[string]string{
 	"I2VA":   "I2VA (first frame to video). <Picture 1> is the first frame of the video.",
 	"FL2VA":  "FL2VA (first and last frame). Picture 1 is the first frame and Picture 2 is the last frame.",
 	"L2VA":   "L2VA (last frame). <Picture 1> is the last frame of the video.",
-	"Ref2VA": "Ref2VA (full reference). Use the six-section full-reference format; attached pictures are reference assets in the given order.",
+	"Ref2VA": "Ref2VA (full reference). The attached pictures, in the given order, show the subjects and look to keep; the video itself is newly composed.",
 }
 
 func buildPromptRequest(mode string, dur float64, idea, current, instruction string, nImages int) llmRequest {
@@ -374,8 +401,12 @@ func buildPromptRequest(mode string, dur float64, idea, current, instruction str
 	if dur > 15 {
 		dur = 15
 	}
-	sys := "You are an expert prompt writer for the MiniMax H3 audio-video generation model. Follow the guide below exactly.\n\n" +
-		h3Guide +
+	guide, imported := promptGuide()
+	intro := "You are an expert prompt writer for an audio-video generation model. Use the advice below.\n\n"
+	if imported {
+		intro = "You are an expert prompt writer for the MiniMax H3 audio-video generation model. Follow the guide below exactly.\n\n"
+	}
+	sys := intro + guide +
 		"\n\n# Output contract\n" +
 		"- Output ONLY the final prompt text, ready to paste into the model. No preamble, no explanations, no markdown code fences, no headings other than the required field names.\n" +
 		"- Write in English, except dialogue/lyrics inside <d> and visible on-screen text, which keep the user's original language (usually Chinese).\n" +
@@ -447,6 +478,49 @@ func llmWriteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	send("done", true)
+}
+
+// ---- imported prompt guide (settings → 大模型 API) ----
+
+func promptGuideHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		out := map[string]any{"imported": false}
+		if st, err := os.Stat(userGuidePath()); err == nil {
+			out = map[string]any{"imported": true, "size": st.Size(), "modified": st.ModTime().Unix()}
+		}
+		jsonOut(w, 200, out)
+	case "POST":
+		var in struct {
+			Name string `json:"name"`
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4*guideMaxBytes)).Decode(&in); err != nil {
+			errOut(w, 400, errString("读取失败："+err.Error()))
+			return
+		}
+		ext := strings.ToLower(filepath.Ext(in.Name))
+		switch {
+		case ext != ".md" && ext != ".txt":
+			errOut(w, 400, errString("只支持 .md 或 .txt 文件"))
+		case strings.TrimSpace(in.Text) == "":
+			errOut(w, 400, errString("文件是空的"))
+		case len(in.Text) > guideMaxBytes:
+			errOut(w, 400, errString("文件太大（最大 1 MB）"))
+		case !utf8.ValidString(in.Text):
+			errOut(w, 400, errString("文件不是 UTF-8 文本"))
+		default:
+			os.MkdirAll(filepath.Dir(userGuidePath()), 0o700)
+			if err := os.WriteFile(userGuidePath(), []byte(in.Text), 0o600); err != nil {
+				errOut(w, 500, err)
+				return
+			}
+			jsonOut(w, 200, map[string]any{"imported": true, "size": len(in.Text)})
+		}
+	case "DELETE":
+		os.Remove(userGuidePath())
+		jsonOut(w, 200, map[string]any{"imported": false})
+	}
 }
 
 func llmTestHandler(w http.ResponseWriter, r *http.Request) {

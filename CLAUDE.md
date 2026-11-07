@@ -1,7 +1,9 @@
 # CLAUDE.md — Wakeloom（唤织）维护说明
 
 Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，AI 页用 Ollama 跑 GGUF 大模型对话 + SDXL/Chroma 生图，空闲自动停机。
-单文件 exe（Go + WebView2），界面、启动套件、提示词全部 `go:embed` 进 exe。
+单文件 exe（Go + WebView2），界面、启动套件全部 `go:embed` 进 exe。
+
+**合规：** 不要把 MiniMax 官方 H3 提示词指南（或其中的句子）放进仓库或 exe——其社区许可限制分发地区。提示词骨架、片段、内置说明都要用自己的措辞，只保留模型要求的字段名（如 `integrated_multimodal_description`、`<Picture 1>`、`[Shot 1]`）。
 
 ## 目录结构
 
@@ -13,7 +15,7 @@ Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，
 | `gate.go` / `proxy*.go` | 网关模式：连接用户 VPS 上的 comfy-colab-kit 网关 |
 | `localgate.go`（`//go:embed kit`）、`colab.go`、`colab_auth.go`、`libstore.go`、`local_api.go` | 本地模式（实验）：程序自己当网关，用 Google 账号直接开关 Colab（非公开接口） |
 | `jobs.go`、`templates.go`、`labels.go` | 任务队列、ComfyUI API 工作流模板、参数中文名/推荐值 |
-| `ai.go`、`llm.go`（`//go:embed prompts/h3_guide.md`） | AI 页对话（经 ComfyUI 的 `/wbllm` 路由到 VM 上的 Ollama）、AI 写提示词 |
+| `ai.go`、`llm.go` | AI 页对话（经 ComfyUI 的 `/wbllm` 路由到 VM 上的 Ollama）、AI 写提示词（内置原创的通用说明 `builtinPromptGuide`；用户可导入 H3 官方指南到 `<dataDir>/prompts/h3_guide.md`，有则优先用） |
 | `gpu.go` | GPU/系统负载面板 |
 | `custom_models.go` | 「添加模型」：解析 HF 链接、读 HF API（走 proxy.go 的 transport）、识别四种类型、推荐 GPU、生成并校验 profile.yaml（`validateProfileYAML` 是 kit/gate/profiles.py `parse_profile` 的 Go 版）；本地网关的 `/_gate/custom-profiles` |
 | `ui/models.js` | 「添加模型」弹窗、设置里的自定义模型列表（依赖 app.js / ai.js 的全局函数） |
@@ -24,7 +26,6 @@ Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，
 | `*_windows.go` / `*_other.go` | 平台相关（窗口、单实例、系统代理）；非 Windows 版本只是桩，便于 Linux 上测试 |
 | `rsrc_windows_amd64.syso`、`winres/` | 图标/版本资源（go-winres 生成） |
 | `ui/` | 内嵌界面：`index.html`、`app.js`、`ai.js`、`style.css` |
-| `prompts/` | AI 写提示词的系统提示 |
 | `kit/` | 上传到 Colab 的启动套件（来自 FireTable/comfy-colab-kit，MIT）：`colab/setup.py`（VM 上的启动脚本）、`gate/`（配置/计划解析）、`profiles/`（内置启动配置）、`driver.py`、`wbproxy.py` |
 | `gateway/` | 给用户 VPS 网关打的一键补丁：`gate-gpu-select.py`、`gate-library.py`、`gate-ai.py`（生成物） |
 | `gateway/src/edits.py` + `build.py` | `gate-ai.py` 的源码；**不要手改 `gate-ai.py`** |

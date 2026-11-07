@@ -180,6 +180,7 @@ func newServer() http.Handler {
 	api.HandleFunc("POST /api/update/apply", updateApplyHandler)
 	api.HandleFunc("GET /api/update/status", updateStatusHandler)
 	api.HandleFunc("POST /api/llm/write", llmWriteHandler)
+	api.HandleFunc("/api/prompt-guide", promptGuideHandler)
 	api.HandleFunc("POST /api/llm/test", llmTestHandler)
 	api.HandleFunc("POST /api/llm/models", llmModelsHandler)
 	api.HandleFunc("GET /api/pair/state", func(w http.ResponseWriter, r *http.Request) {
