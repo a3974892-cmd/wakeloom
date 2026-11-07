@@ -57,7 +57,8 @@ def main():
             if region and region[0] in out:
                 i = out.index(region[0])
                 j = out.index(region[1], i)
-                body = new[:-len(region[1])] if new.endswith(region[1]) else new
+                seg = new[new.find(region[0]):] if region[0] in new else new  # new may start with its anchor
+                body = seg[:-len(region[1])] if seg.endswith(region[1]) else seg
                 out = out[:i] + body + out[j:]
                 changed += 1
                 continue

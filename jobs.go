@@ -348,6 +348,11 @@ func waitReady(j *Job) bool {
 				if t, err := loadTemplate(j.TemplateID); err == nil && t.Profile != "" {
 					body["profile"] = t.Profile // a custom model linked to this template
 				}
+				if p, _ := body["profile"].(string); customWakeProblem(p) != "" {
+					store.update(j, func(j *Job) { j.Status, j.Message = "waiting", customWakeProblem(p) })
+					time.Sleep(30 * time.Second)
+					continue
+				}
 				var out map[string]any
 				if err := gateJSON("POST", "/_gate/wake", body, &out); err != nil {
 					store.update(j, func(j *Job) { j.Status, j.Message = "waiting", "自动唤醒失败："+err.Error() })

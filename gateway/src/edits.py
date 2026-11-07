@@ -155,12 +155,34 @@ def save_custom(state_dir, text, builtin=()) -> Profile:
     if pid in builtin:
         raise ProfileError(f"{pid!r} is a built-in profile and cannot be replaced")
     prof = parse_profile(data, custom_root(state_dir) / pid)  # also rejects ids that are not [a-z0-9-]
+    problem = custom_problem(prof)
+    if problem:
+        raise ProfileError(problem)
     d = custom_root(state_dir) / prof.id
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / "profile.yaml.tmp"
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(d / "profile.yaml")
     return prof
+
+
+CUSTOM_MAX_GB = 96 * 0.9  # biggest Colab GPU (G4, 96 GB) with headroom
+
+
+def custom_problem(prof: Profile) -> str:
+    """Why a user-added profile could not be used ('' = fine): same checks as Wakeloom's customProblem()."""
+    used = {mid for w in prof.workflows.values() for mid in w.models}
+    used |= set(prof.smoke.models if prof.smoke else ()) | set((prof.ai or {}).get("models") or ())
+    used |= {m.id for m in prof.models.values() if m.core}
+    if not used:
+        return "no model would be downloaded: mark the files core: true or reference them from the ai block"
+    entry = prof.raw.get("wb_entry") or {}
+    if not prof.ai and not (isinstance(entry, dict) and str(entry.get("template") or "").strip()):
+        return "nothing to use it with: needs an ai block (llm / image) or a linked template (wb_entry.template)"
+    total = sum(prof.models[m].size_gb or 0 for m in used)
+    if total > CUSTOM_MAX_GB:
+        return f"the models need about {total:.0f} GB, more than the {CUSTOM_MAX_GB:.1f} GB a Colab GPU can hold"
+    return ""
 
 
 def delete_custom(state_dir, pid) -> bool:
@@ -180,6 +202,10 @@ PROFILES = [
      "    model_aliases: dict = field(default_factory=dict)\n    ai: dict | None = None  # wb-ai\n"),
     ("        ids |= set(self.smoke.models if self.smoke else ())\n",
      "        ids |= set(self.smoke.models if self.smoke else ())\n        ids |= set((self.ai or {}).get(\"models\") or ())\n"),
+    ("        ids |= set((self.ai or {}).get(\"models\") or ())\n",
+     "        ids |= set((self.ai or {}).get(\"models\") or ())\n"
+     "        used = {mid for w in self.workflows.values() for mid in w.models} | ids  # wb-core: see plan.py\n"
+     "        ids |= {m.id for m in self.models.values() if m.core and m.id not in used}\n"),
     ('            "app_default": self.app_default,\n',
      '            "app_default": self.app_default,\n            "ai": self.ai,\n'),
     # upgrade path: an older _parse_ai (between AI_TYPES and parse_profile) is replaced in place
@@ -197,6 +223,15 @@ PLAN = [
      "    default_core |= {m.id for m in ai_models}\n"),
     ('        "default_view": settings.default_view,\n',
      '        "ai": getattr(profile, "ai", None),\n        "default_view": settings.default_view,\n'),
+    ("    default_core |= {m.id for m in ai_models}\n",
+     "    default_core |= {m.id for m in ai_models}\n"
+     "    # wb-core: `core: true` models that no workflow / smoke test / ai block uses (user-added \"any model\"\n"
+     "    # profiles) are downloaded on every wake too; models a workflow uses keep that workflow's rules\n"
+     "    used = {mid for w in profile.workflows.values() for mid in w.models}\n"
+     "    used |= set(profile.smoke.models if profile.smoke else ()) | {m.id for m in ai_models}\n"
+     "    for m in profile.models.values():\n"
+     "        if m.core and m.id not in used:\n"
+     "            models.setdefault(m.id, m)\n"),
 ]
 
 AI_SETUP = r'''
@@ -464,6 +499,11 @@ BOOT_NEW = """        if not os.path.isfile(f"{COMFY}/main.py"):
 
 SETUP = [
     (BOOT_OLD, BOOT_NEW),
+    ('        return fetch_only()\n    cfg = PLAN["comfyui"]\n',
+     '        return fetch_only()\n'
+     '    if not PLAN.get("models"):  # wb-empty: nothing to download usually means a broken profile\n'
+     '        print("KIT_WARN no_models: this start profile has no models to download - check the profile", flush=True)\n'
+     '    cfg = PLAN["comfyui"]\n'),
     ("\ndef install_custom_nodes():", AI_SETUP, ("\n# ── wb-ai: local LLM", "\ndef install_custom_nodes():")),
     ('    open(f"{base}/kit_heartbeat/web/kit.js", "w").write(KIT_JS)\n',
      '    open(f"{base}/kit_heartbeat/web/kit.js", "w").write(KIT_JS)\n'
@@ -501,7 +541,7 @@ async def custom_profiles_list(request: web.Request) -> web.Response:
     for pid in sorted(custom_ids(sd)):
         p = profs.get(pid)
         items.append({"id": pid, "title": p.title if p else pid, "loaded": p is not None,
-                      "error": errors.get(f"custom:{pid}", ""),
+                      "error": errors.get(f"custom:{pid}", ""), "problem": custom_problem(p) if p else "",
                       "yaml": (custom_root(sd) / pid / "profile.yaml").read_text(encoding="utf-8")})
     return web.json_response({"items": items, "max_bytes": CUSTOM_MAX_BYTES})
 
@@ -546,8 +586,9 @@ async def switch(request: web.Request) -> web.Response:
 APP = [
     ("from .profiles import Profile, load_all\n",
      "from .profiles import Profile, load_all\n"
-     "from .profiles import (CUSTOM_MAX_BYTES, ProfileError, custom_ids, custom_root, delete_custom,  # wb-custom\n"
-     "                       load_custom, save_custom)\n"),
+     "from .profiles import (CUSTOM_MAX_BYTES, ProfileError, custom_ids, custom_problem, custom_root,  # wb-custom\n"
+     "                       delete_custom, load_custom, save_custom)\n",
+     ("from .profiles import (CUSTOM_MAX_BYTES", "save_custom)\n")),
     ("        profiles, errors = load_all(settings.profiles, REPO_ROOT)\n    else:\n",
      "        profiles, errors = load_all(settings.profiles, REPO_ROOT)\n"
      "        custom, cerrors = load_custom(settings.state_dir, profiles)  # wb-custom\n"
@@ -620,6 +661,32 @@ async def test_custom_profiles_crud(tmp_path):
         assert (await c.delete("/_gate/custom-profiles/tiny")).status == 404
     finally:
         await c.close()
+
+
+ANY_MODEL = """id: custom-any
+title: Any model
+comfyui: {repo: https://github.com/comfyanonymous/ComfyUI, commit: 2c75dc1b}
+models:
+- {id: f1, dest: loras/a.safetensors, url: hf://o/r/a.safetensors, license: mit, size_gb: 0.2, core: true}
+wb_entry: {template: my-template}
+"""
+
+
+def test_custom_save_checks_and_core_plan(tmp_path):
+    import pytest
+    from gate.config import Settings
+    from gate.plan import build_plan
+    from gate.profiles import ProfileError, save_custom
+
+    sd = str(tmp_path)
+    prof = save_custom(sd, ANY_MODEL)
+    plan = build_plan(prof, Settings.from_env({"AUTH_DISABLED": "true", "STATE_DIR": sd}))
+    assert [m["dest"] for m in plan["models"]] == ["loras/a.safetensors"] and plan["models"][0]["core"] is True
+    for bad, why in ((ANY_MODEL.replace(", core: true", ""), "no model"),
+                     (ANY_MODEL.replace("wb_entry: {template: my-template}\n", ""), "nothing to use"),
+                     (ANY_MODEL.replace("size_gb: 0.2", "size_gb: 90"), "GB")):
+        with pytest.raises(ProfileError, match=why):
+            save_custom(sd, bad)
 
 
 async def test_custom_profiles_owner_only(tmp_path):

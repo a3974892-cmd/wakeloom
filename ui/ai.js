@@ -8,6 +8,9 @@ const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == n
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } };
 
 function aiProfiles() { return (profiles && profiles.profiles || []).filter(p => p.ai && p.ai.type); }
+// user-added "any model" profiles: no ai block, used through a linked 生成-page template
+function aiGenericProfiles() { return (profiles && profiles.profiles || []).filter(p => !p.ai && p.id.startsWith("custom-")); }
+function cmItem(pid) { return typeof CM !== "undefined" ? (CM.items || []).find(x => x.id === pid) : null; }
 function aiCurrent() {
   const p = gst && gst.profile && profiles && profiles.profiles && profiles.profiles.find(x => x.id === gst.profile);
   return p && p.ai ? p : null;
@@ -69,7 +72,7 @@ function aiModelReady() {
 const AI_ADD_CARD = `<button type="button" class="card ai-card ai-add" id="aiAddModel"><span class="ai-add-plus">＋</span><b>添加模型</b>
   <span class="muted small">粘贴 Hugging Face 链接，自动识别类型、大小，推荐 GPU 和参数</span></button>`;
 function aiPickRender() {
-  const list = aiProfiles();
+  const list = aiProfiles().concat(aiGenericProfiles());
   const running = gst && gst.state && gst.state !== "sleeping" && gst.state !== "failed";
   const cur = gst && gst.profile && profiles && profiles.profiles && profiles.profiles.find(x => x.id === gst.profile);
   let html = "";
@@ -79,26 +82,39 @@ function aiPickRender() {
     html += `<div class="ai-cards">${AI_ADD_CARD}</div>`;
   } else {
     html += `<div class="ai-cards">` + list.map(p => {
+      const it = cmItem(p.id), problem = it && it.problem;
+      const wakeBtn = problem ? `<button class="btn sm" data-cmdel="${esc(p.id)}">删除</button>`
+        : running ? `<button class="btn sm" disabled>先停止当前 GPU</button>` : `<button class="btn primary sm" data-aiwake="${esc(p.id)}">用它唤醒</button>`;
+      const bad = problem ? `<p class="err">无法使用：${esc(problem)}</p>` : "";
+      if (!p.ai) { // 通用
+        const tid = it && it.spec && it.spec.template, tpl = (templates || []).find(t => t.id === tid);
+        return `<div class="card ai-card"><div class="row between"><span class="pill ${problem ? "bad" : ""}">通用</span><span class="muted small mono">约 ${p.size_gb_default ?? "?"} GB</span></div>
+          <h3>${esc(p.title || p.id)}</h3><p class="muted small">自定义模型 · ComfyUI 文件</p>
+          ${problem ? "" : `<p class="small">唤醒后在「生成」页使用关联模板${tpl ? `「<span class="tpl-link" data-tpl="${esc(tpl.id)}">${esc(tpl.name)}</span>」` : ""}</p>`}
+          <p class="muted small">建议 ${esc(p.accelerator || "L4")}</p>${bad}<div class="row end">${wakeBtn}</div></div>`;
+      }
       const a = p.ai, llm = a.type === "llm";
       const chroma = !llm && a.image.arch === "chroma";
       const meta = llm ? `Ollama · 上下文 ${Math.round((a.llm.ctx || 32768) / 1024)}K` : `${chroma ? "Chroma (FLUX)" : "SDXL 检查点"} · 默认 ${a.image.width}×${a.image.height} · ${a.image.steps} 步`;
       const gpu = p.id.startsWith("custom-") ? `建议 ${p.accelerator || "L4"}` : llm ? "建议 G4 / A100 / H100（显存 ≥ 40 GB）" : chroma ? "建议 G4 / A100（显存 ≥ 32 GB）" : "任意 GPU（L4 就够）";
-      const btn = running ? `<button class="btn sm" disabled>先停止当前 GPU</button>` : `<button class="btn primary sm" data-aiwake="${esc(p.id)}">用它唤醒</button>`;
-      return `<div class="card ai-card"><div class="row between"><span class="pill ${llm ? "llm" : "img"}">${llm ? "对话" : "生图"}</span><span class="muted small mono">约 ${p.size_gb_default ?? "?"} GB</span></div>
-        <h3>${esc(a.title || p.title)}</h3><p class="muted small">${p.id.startsWith("custom-") ? "自定义模型" : esc(p.title)}</p><p class="small">${esc(meta)}</p><p class="muted small">${esc(gpu)}</p>
+      const btn = wakeBtn;
+      return `<div class="card ai-card"><div class="row between"><span class="pill ${problem ? "bad" : llm ? "llm" : "img"}">${llm ? "对话" : "生图"}</span><span class="muted small mono">约 ${p.size_gb_default ?? "?"} GB</span></div>
+        <h3>${esc(a.title || p.title)}</h3><p class="muted small">${p.id.startsWith("custom-") ? "自定义模型" : esc(p.title)}</p><p class="small">${esc(meta)}</p><p class="muted small">${esc(gpu)}</p>${bad}
         <div class="row end">${btn}</div></div>`;
     }).join("") + AI_ADD_CARD + `</div>`;
   }
   $("#aiPick").innerHTML = html;
   $$("[data-aiwake]").forEach(b => b.onclick = () => aiWake(b.dataset.aiwake));
+  $$("#aiPick [data-cmdel]").forEach(b => b.onclick = () => cmDelete(b.dataset.cmdel));
+  $$("#aiPick [data-tpl]").forEach(s => s.onclick = () => { show("gen"); selectTpl(s.dataset.tpl); });
 }
 
 async function aiWake(pid) {
-  const p = aiProfiles().find(x => x.id === pid); if (!p) return;
+  const p = (profiles && profiles.profiles || []).find(x => x.id === pid); if (!p) return;
   const acc = p.accelerator || "";
   const accSel = $("#wakeAcc");
   const canAcc = accSel && !accSel.disabled && !$("#accWrap").hidden;
-  if (!confirm(`用「${p.ai.title || p.title}」唤醒 GPU？\n\n要下载约 ${p.size_gb_default ?? "?"} GB 模型${canAcc && acc ? `，GPU 用 ${acc}` : ""}。`)) return;
+  if (!confirm(`用「${(p.ai && p.ai.title) || p.title}」唤醒 GPU？\n\n要下载约 ${p.size_gb_default ?? "?"} GB 模型${canAcc && acc ? `，GPU 用 ${acc}` : ""}。`)) return;
   $("#wakeProfile").value = pid;
   $("#wakeProfile").dispatchEvent(new Event("change"));
   if (canAcc && acc && [...accSel.options].some(o => o.value === acc)) accSel.value = acc;

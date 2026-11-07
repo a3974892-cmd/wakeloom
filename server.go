@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -134,7 +135,20 @@ func newServer() http.Handler {
 		jsonOut(w, 200, st)
 	})
 	api.HandleFunc("GET /api/gate/profiles", gatePass("GET", "/_gate/profiles"))
-	api.HandleFunc("POST /api/gate/wake", gatePass("POST", "/_gate/wake"))
+	wakePass := gatePass("POST", "/_gate/wake")
+	api.HandleFunc("POST /api/gate/wake", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		var in struct {
+			Profile string `json:"profile"`
+		}
+		json.Unmarshal(b, &in)
+		if why := customWakeProblem(in.Profile); why != "" { // a broken custom profile would only burn CU
+			jsonOut(w, 400, map[string]any{"error": why, "status": 400})
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(b))
+		wakePass(w, r)
+	})
 	api.HandleFunc("POST /api/gate/stop", func(w http.ResponseWriter, r *http.Request) {
 		warn := ud.beforeStop() // back up ComfyUI user data first (at most 20 s)
 		var out map[string]any

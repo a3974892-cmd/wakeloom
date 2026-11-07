@@ -121,6 +121,8 @@ class Profile:
         ids = {m.id for m in (self.models_for([self.app_default]) if self.app_default else [])}
         ids |= set(self.smoke.models if self.smoke else ())
         ids |= set((self.ai or {}).get("models") or ())
+        used = {mid for w in self.workflows.values() for mid in w.models} | ids  # wb-core: see plan.py
+        ids |= {m.id for m in self.models.values() if m.core and m.id not in used}
         return round(sum(self.models[i].size_gb or 0 for i in ids), 2)
 
     def summary(self) -> dict:
@@ -451,12 +453,34 @@ def save_custom(state_dir, text, builtin=()) -> Profile:
     if pid in builtin:
         raise ProfileError(f"{pid!r} is a built-in profile and cannot be replaced")
     prof = parse_profile(data, custom_root(state_dir) / pid)  # also rejects ids that are not [a-z0-9-]
+    problem = custom_problem(prof)
+    if problem:
+        raise ProfileError(problem)
     d = custom_root(state_dir) / prof.id
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / "profile.yaml.tmp"
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(d / "profile.yaml")
     return prof
+
+
+CUSTOM_MAX_GB = 96 * 0.9  # biggest Colab GPU (G4, 96 GB) with headroom
+
+
+def custom_problem(prof: Profile) -> str:
+    """Why a user-added profile could not be used ('' = fine): same checks as Wakeloom's customProblem()."""
+    used = {mid for w in prof.workflows.values() for mid in w.models}
+    used |= set(prof.smoke.models if prof.smoke else ()) | set((prof.ai or {}).get("models") or ())
+    used |= {m.id for m in prof.models.values() if m.core}
+    if not used:
+        return "no model would be downloaded: mark the files core: true or reference them from the ai block"
+    entry = prof.raw.get("wb_entry") or {}
+    if not prof.ai and not (isinstance(entry, dict) and str(entry.get("template") or "").strip()):
+        return "nothing to use it with: needs an ai block (llm / image) or a linked template (wb_entry.template)"
+    total = sum(prof.models[m].size_gb or 0 for m in used)
+    if total > CUSTOM_MAX_GB:
+        return f"the models need about {total:.0f} GB, more than the {CUSTOM_MAX_GB:.1f} GB a Colab GPU can hold"
+    return ""
 
 
 def delete_custom(state_dir, pid) -> bool:

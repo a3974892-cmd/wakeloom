@@ -1461,6 +1461,8 @@ def main():
     os.makedirs(LOG, exist_ok=True)
     if PLAN.get("fetch_only"):
         return fetch_only()
+    if not PLAN.get("models"):  # wb-empty: nothing to download usually means a broken profile
+        print("KIT_WARN no_models: this start profile has no models to download - check the profile", flush=True)
     cfg = PLAN["comfyui"]
     if up():
         print("ComfyUI already running on this VM; skipping setup.", flush=True)

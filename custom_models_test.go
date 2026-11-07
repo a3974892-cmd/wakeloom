@@ -59,10 +59,10 @@ func TestRecommendGPUAndID(t *testing.T) {
 	for _, c := range []struct {
 		gb  float64
 		gpu string
-	}{{0.5, "L4"}, {6.94, "L4"}, {15, "L4"}, {16, "G4"}, {29.05, "G4"}, {65, "G4"}, {65.1, "H100"}, {200, "H100"}} {
+	}{{0.5, "L4"}, {6.94, "L4"}, {15, "L4"}, {16, "G4"}, {29.05, "G4"}, {65, "G4"}, {80, "G4"}, {80.1, ""}, {1560, ""}} {
 		g, need, note := recommendGPU(c.gb)
-		if g != c.gpu || (g == "H100") != (note != "") || need < c.gb {
-			t.Errorf("%v GB -> %s %v %q, want %s", c.gb, g, need, note, c.gpu)
+		if g != c.gpu || (g == "") != strings.Contains(note, "无法运行") || (g == "G4") != strings.Contains(note, "L4（24 GB）放不下") || need < c.gb {
+			t.Errorf("%v GB -> %q %v %q, want %q", c.gb, g, need, note, c.gpu)
 		}
 	}
 	for in, want := range map[string]string{
@@ -106,9 +106,19 @@ func TestPickQuant(t *testing.T) {
 // fakeHF serves testdata/hf/<name>/ as the Hugging Face API for repo ids mapped below.
 func fakeHF(t *testing.T) {
 	repos := map[string]string{"huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF": "gguf", "SG161222/RealVisXL_V5.0": "sdxl",
-		"lodestones/Chroma1-HD": "chroma", "black-forest-labs/FLUX.1-dev": "flux"}
+		"lodestones/Chroma1-HD": "chroma", "black-forest-labs/FLUX.1-dev": "flux", "moonshotai/Kimi-K3.1-Pro": "kimi",
+		"unsloth/Kimi-K3.1-Pro-GGUF": "kimi-gguf"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
+		if p == "/api/models" && r.URL.Query().Get("filter") == "gguf" {
+			if strings.HasPrefix(r.URL.Query().Get("search"), "Kimi-K3.1-Pro") {
+				b, _ := os.ReadFile("testdata/hf/kimi/search.json")
+				w.Write(b)
+				return
+			}
+			w.Write([]byte("[]"))
+			return
+		}
 		for repo, dir := range repos {
 			var f string
 			switch {
@@ -234,6 +244,7 @@ func specsForKinds(t *testing.T) []CustomSpec {
 		}
 		s.Files = append(s.Files, r.Extras...)
 		if r.Kind == "comfy" {
+			s.Template = "tpl-flux"
 			for _, f := range r.Files {
 				s.Files = append(s.Files, specFile{Role: "extra", URL: ref.hfURL(f.Path), Dir: f.Dir, SizeGB: f.SizeGB, License: r.License})
 			}
@@ -508,5 +519,141 @@ func TestGatewayCustomProfiles(t *testing.T) {
 	text, _, _ := buildProfile(specsForKinds(t)[0])
 	if err := customGate("POST", "", map[string]string{"yaml": string(text)}, &out); err != nil || saved != string(text) {
 		t.Fatal(err)
+	}
+}
+
+func TestInspectUnsupportedAndOversize(t *testing.T) {
+	fakeHF(t)
+	ctx := context.Background()
+	r, err := inspectHF(ctx, "https://huggingface.co/moonshotai/Kimi-K3.1-Pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Kind != "llm_unsupported" || r.Blocked == "" || r.TotalGB < 1500 || len(r.Selected) != 0 {
+		t.Fatalf("kimi: kind=%s blocked=%q total=%v", r.Kind, r.Blocked, r.TotalGB)
+	}
+	if len(r.GGUFRepos) != 2 || r.GGUFRepos[0].Repo != "unsloth/Kimi-K3.1-Pro-GGUF" || r.GGUFRepos[0].MinQuant != "IQ1_S" ||
+		r.GGUFRepos[0].MinGB != 352 || r.GGUFRepos[0].MaxGB != 1460 || r.GGUFRepos[0].Fits {
+		t.Errorf("gguf search: %+v", r.GGUFRepos)
+	}
+	if _, _, err := buildProfile(CustomSpec{Title: "Kimi", Kind: "llm_unsupported", Files: []specFile{{Role: "model", URL: "hf://o/r/model-00001-of-00064.safetensors", Dir: "llm", SizeGB: 24}}}); err == nil {
+		t.Error("non-GGUF chat model saved")
+	}
+
+	// a GGUF repo with only too-big files is blocked; a fitting quantisation is offered and passes
+	files := []hfFile{{Path: "big-Q8_0.gguf", SizeGB: 120, Quant: "Q8_0"}, {Path: "big-Q2_K.gguf", SizeGB: 85, Quant: "Q2_K"}}
+	m := &hfModelInfo{ID: "o/big-GGUF", Tags: []string{"gguf"}, PipelineTag: "text-generation"}
+	res, err := buildInspect(hfRef{Repo: "o/big-GGUF"}, m, files, "")
+	if err != nil || res.Blocked == "" || !strings.Contains(res.Blocked, "超过 Colab 最大显存 96 GB") || len(res.Smaller) != 0 {
+		t.Fatalf("too big: %+v %v", res, err)
+	}
+	files = append(files, hfFile{Path: "big-IQ2_XS.gguf", SizeGB: 70, Quant: "IQ2_XS"})
+	res, _ = buildInspect(hfRef{Repo: "o/big-GGUF"}, m, files, "")
+	if res.Blocked != "" || res.Selected[0] != "big-IQ2_XS.gguf" || res.GPU != "G4" {
+		t.Fatalf("fitting quant not picked: %+v", res)
+	}
+	res, _ = buildInspect(hfRef{Repo: "o/big-GGUF", Path: "big-Q8_0.gguf"}, m, files, "") // the link pointed at Q8_0
+	if res.Blocked == "" || len(res.Smaller) != 1 || res.Smaller[0].Path != "big-IQ2_XS.gguf" {
+		t.Fatalf("linked big file: %+v", res)
+	}
+	ok := CustomSpec{Title: "Big", Kind: "llm", GPU: "G4", Files: []specFile{{Role: "model", URL: "hf://o/big-GGUF/big-IQ2_XS.gguf", Dir: "llm", SizeGB: 70}}}
+	if _, _, err := buildProfile(ok); err != nil {
+		t.Error("fitting GGUF rejected:", err)
+	}
+	ok.Files[0].SizeGB = 90
+	if _, _, err := buildProfile(ok); err == nil || !strings.Contains(err.Error(), "86.4") {
+		t.Error("oversize GGUF saved:", err)
+	}
+	// unrecognised repos must not be saved as they are
+	res, _ = buildInspect(hfRef{Repo: "o/mystery"}, &hfModelInfo{ID: "o/mystery"}, []hfFile{{Path: "w.safetensors", SizeGB: 2}}, "")
+	if res.Kind != "unknown" {
+		t.Errorf("mystery repo kind %s", res.Kind)
+	}
+	if _, _, err := buildProfile(CustomSpec{Title: "x", Kind: "unknown", Files: []specFile{{Role: "extra", URL: "hf://o/r/w.safetensors", Dir: "checkpoints"}}}); err == nil {
+		t.Error("unknown kind saved")
+	}
+}
+
+func TestCustomProblem(t *testing.T) {
+	head := "id: custom-x\ntitle: X\naccelerator: L4\ncomfyui: {repo: https://github.com/comfyanonymous/ComfyUI, commit: abc}\n"
+	cases := map[string]string{
+		// what v1.19.0 saved for the Kimi repo: files, but nothing that is ever downloaded and no entry
+		head + "models: [{id: file-1, dest: checkpoints/model-00001-of-00064.safetensors, url: hf://moonshotai/Kimi-K3.1-Pro/model-00001-of-00064.safetensors, size_gb: 24}]\n": "没有会被下载",
+		head + "models: [{id: f, dest: loras/a.safetensors, url: hf://o/r/a.safetensors, size_gb: 1, core: true}]\n":                                                            "没有可用的入口",
+		head + "models: [{id: f, dest: loras/a.safetensors, url: hf://o/r/a.safetensors, size_gb: 90, core: true}]\nwb_entry: {template: t1}\n":                                 "超过 Colab",
+		head + "models: []\n": "没有会被下载",
+		head + "models: [{id: f, dest: loras/a.safetensors, url: hf://o/r/a.safetensors, size_gb: 1, core: true}]\nwb_entry: {template: t1}\n": "",
+		head + "models: [{id: m, dest: llm/a.gguf, url: hf://o/r/a.gguf, size_gb: 5}]\nai: {type: llm, llm: {model: m}}\n":                     "",
+	}
+	for y, want := range cases {
+		got := customProblem([]byte(y), "custom-x")
+		if (want == "") != (got == "") || want != "" && !strings.Contains(got, want) {
+			t.Errorf("%q\n -> %q, want %q", y, got, want)
+		}
+	}
+}
+
+func TestWakeRefusesBrokenCustomProfile(t *testing.T) {
+	old := dataDir
+	dataDir = t.TempDir()
+	cfgMu.Lock()
+	oldCfg := cfg
+	cfg = Config{Mode: "local"}
+	cfgMu.Unlock()
+	t.Cleanup(func() { dataDir = old; cfgMu.Lock(); cfg = oldCfg; cfgMu.Unlock() })
+	bad := "id: custom-kimi\ntitle: Kimi\naccelerator: G4\ncomfyui: {repo: https://github.com/comfyanonymous/ComfyUI, commit: abc}\n" +
+		"models: [{id: file-1, dest: checkpoints/m.safetensors, url: hf://o/r/m.safetensors, size_gb: 24}]\n"
+	os.MkdirAll(filepath.Join(userProfilesDir(), "custom-kimi"), 0o755)
+	os.WriteFile(filepath.Join(userProfilesDir(), "custom-kimi", "profile.yaml"), []byte(bad), 0o644)
+	if why := customWakeProblem("custom-kimi"); !strings.Contains(why, "无法用") || !strings.Contains(why, "没有会被下载") {
+		t.Errorf("broken profile not caught: %q", why)
+	}
+	if customWakeProblem("realvisxl-v5") != "" || customWakeProblem("custom-missing") != "" {
+		t.Error("false alarm")
+	}
+	if _, err := localCustomSave(bad); err == nil {
+		t.Error("broken profile saved locally")
+	}
+}
+
+// The kit's plan for every built-in profile must stay exactly what it was before core-only models were
+// downloaded (testdata/plans was generated with the old plan.py). Needs python3 + PyYAML.
+func TestBuiltinPlansUnchanged(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil || exec.Command(py, "-c", "import yaml").Run() != nil {
+		t.Skip("python3 / PyYAML not installed")
+	}
+	kit, _ := filepath.Abs("kit")
+	out := t.TempDir()
+	script := `
+import hashlib, json, pathlib, sys
+kit, out = sys.argv[1], pathlib.Path(sys.argv[2])
+sys.dont_write_bytecode = True
+sys.path.insert(0, kit)
+from gate.config import Settings
+from gate.plan import build_plan
+from gate.profiles import load_profile
+s = Settings.from_env({"AUTH_DISABLED": "true"})
+for d in sorted(pathlib.Path(kit, "profiles").iterdir()):
+    p = load_profile(d)
+    plan = build_plan(p, s)
+    for w in plan["workflows"]:
+        if w.get("inline"):
+            w["inline"] = "sha256:" + hashlib.sha256(w["inline"].encode()).hexdigest()
+    (out / f"{p.id}.json").write_text(json.dumps(plan, ensure_ascii=False, indent=1, sort_keys=True) + "\n")
+`
+	if o, err := exec.Command(py, "-I", "-c", script, kit, out).CombinedOutput(); err != nil {
+		t.Fatalf("python: %v\n%s", err, o)
+	}
+	want, _ := filepath.Glob("testdata/plans/*.json")
+	if len(want) != 7 {
+		t.Fatalf("expected 7 snapshots, got %d", len(want))
+	}
+	for _, f := range want {
+		a, _ := os.ReadFile(f)
+		b, err := os.ReadFile(filepath.Join(out, filepath.Base(f)))
+		if err != nil || !bytes.Equal(a, b) {
+			t.Errorf("%s: plan changed (%v)", filepath.Base(f), err)
+		}
 	}
 }
