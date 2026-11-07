@@ -986,6 +986,7 @@ type LocalProfile struct {
 	Workflows []struct {
 		ID       string   `yaml:"id"`
 		Title    string   `yaml:"title"`
+		File     string   `yaml:"file"`
 		Optional bool     `yaml:"optional"`
 		Prefetch bool     `yaml:"prefetch"`
 		Models   []string `yaml:"models"`
@@ -1099,7 +1100,8 @@ func localProfilesSummary() map[string]any {
 			for _, m := range w.Models {
 				mm[m] = true
 			}
-			wfs = append(wfs, map[string]any{"id": w.ID, "title": w.Title, "optional": w.Optional, "prefetch": w.Prefetch, "size_gb": p.sizeOf(mm)})
+			embedded := p.builtin && w.File != "" && fs.ValidPath(w.File) && path.Ext(w.File) == ".json"
+			wfs = append(wfs, map[string]any{"id": w.ID, "title": w.Title, "optional": w.Optional, "prefetch": w.Prefetch, "size_gb": p.sizeOf(mm), "embedded": embedded})
 		}
 		list = append(list, map[string]any{"id": p.ID, "title": p.Title, "accelerator": p.Accelerator, "app_default": p.AppDefault,
 			"size_gb_default": p.sizeOf(wake), "workflows": wfs, "builtin": p.builtin, "ai": aiV})

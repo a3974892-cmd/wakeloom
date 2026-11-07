@@ -604,6 +604,8 @@ $("#genForm").onsubmit = e => { e.preventDefault(); submitJob(false); };
 $("#btnDraft").onclick = () => submitJob(true);
 async function submitJob(draft) {
   $("#genErr").textContent = "";
+  const mismatch = templateProfileMismatch(curTpl);
+  if (mismatch) { $("#genErr").textContent = mismatch; return; }
   const { values, files, rand } = collectValues(false);
   const title = $("#jobTitle").value.trim() || curTpl.name;
   const fd = new FormData();

@@ -213,6 +213,7 @@ func newServer() http.Handler {
 	})
 
 	// ---- templates ----
+	api.HandleFunc("GET /api/profile-workflows/{profile}/{workflow}", profileWorkflowFile)
 	api.HandleFunc("GET /api/templates", func(w http.ResponseWriter, r *http.Request) {
 		out := []map[string]any{}
 		for _, t := range listTemplates() {
