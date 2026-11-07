@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const AppVersion = "1.21.1"
+const AppVersion = "1.21.2"
 const defaultUpdateURL = "https://github.com/a3974892-cmd/wakeloom/releases/latest/download/latest.json"
 
 type Release struct {

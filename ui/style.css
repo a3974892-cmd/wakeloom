@@ -387,6 +387,17 @@ details.sub[open] summary::before { content: "− "; }
 .wake-notice-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
 .wake-notice-actions .btn { padding: 9px 17px; border-radius: 9px; }
 .wake-notice button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.profile-workspace { padding: 22px; margin-bottom: 20px; }
+.profile-workspace a.btn { color: var(--text); text-decoration: none; }
+.profile-workspace-head { display: flex; gap: 24px; align-items: center; justify-content: space-between; }
+.profile-workspace-head h3 { font-size: 18px; margin: 10px 0 6px; }
+.profile-workspace-head p { max-width: 620px; margin: 0; line-height: 1.8; }
+.profile-workspace-head button { flex-shrink: 0; }
+.profile-workflow-list { margin-top: 18px; border-top: 1px solid var(--line); }
+.profile-workflow-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.profile-workflow-row b, .profile-workflow-row span { display: block; }
+.profile-workflow-row span { margin-top: 5px; }
+@media (max-width: 700px) { .profile-workspace-head { align-items: flex-start; flex-direction: column; gap: 14px; } }
 .plist { display: flex; flex-direction: column; gap: 6px; min-width: 520px; }
 .plist .p { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; display: flex; gap: 10px; align-items: center; }
 .plist .p .tx { flex: 1; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

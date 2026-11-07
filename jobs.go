@@ -409,6 +409,21 @@ func submit(j *Job) bool {
 		fail(j, "模板已被删除")
 		return false
 	}
+	required := t.Profile
+	if required == "" && strings.HasPrefix(t.ID, "ai-") {
+		required = strings.TrimPrefix(t.ID, "ai-")
+	}
+	if required != "" {
+		st, err := gateStatus()
+		if err != nil {
+			fail(j, "无法核对当前模型配置："+err.Error())
+			return false
+		}
+		if current, _ := st["profile"].(string); current != "" && current != required {
+			fail(j, fmt.Sprintf("当前 GPU 运行的是 %s，此任务需要 %s。请使用当前模型的工作流，或用对应配置重新唤醒", current, required))
+			return false
+		}
+	}
 	store.update(j, func(j *Job) { j.Status, j.Message, j.Started = "uploading", "上传素材…", time.Now().Unix() })
 	g := cloneGraph(t.Graph)
 	for k, v := range j.Values {

@@ -43,6 +43,9 @@ func TestImageModelsUseRunningLoaderLists(t *testing.T) {
 			if tc.name == "empty index" && !strings.Contains(err.Error(), "可用模型 0 个") {
 				t.Fatal(err)
 			}
+			if tc.name == "different model" && !strings.Contains(err.Error(), "当前可用：Other.safetensors") {
+				t.Fatal(err)
+			}
 		})
 	}
 }

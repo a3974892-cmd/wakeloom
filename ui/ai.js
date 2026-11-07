@@ -9,7 +9,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } ca
 
 function aiProfiles() { return (profiles && profiles.profiles || []).filter(p => p.ai && p.ai.type); }
 // user-added "any model" profiles: no ai block, used through a linked 生成-page template
-function aiGenericProfiles() { return (profiles && profiles.profiles || []).filter(p => !p.ai && p.id.startsWith("custom-")); }
+function aiGenericProfiles() { return (profiles && profiles.profiles || []).filter(p => !p.ai && ((p.workflows || []).length || p.id.startsWith("custom-"))); }
 function cmItem(pid) { return typeof CM !== "undefined" ? (CM.items || []).find(x => x.id === pid) : null; }
 function aiCurrent() {
   const p = gst && gst.profile && profiles && profiles.profiles && profiles.profiles.find(x => x.id === gst.profile);
@@ -36,14 +36,14 @@ async function aiOnStatus() {
     }
   }
   if (!p || !ready) { AI.info = null; AI.infoKey = ""; }
-  const key = [st, p && p.id, aiModelReady(), AI.info && AI.info.error, gst ? 1 : 0, profiles ? aiProfiles().length : -1].join("|");
+  const key = [st, gst && gst.profile, p && p.id, aiModelReady(), AI.info && AI.info.error, gst ? 1 : 0, profiles ? aiProfiles().length : -1].join("|");
   if (key === AI.key) return;
   AI.key = key;
 
   // chip
   let chip = "—", cls = "";
   if (!gst) chip = gerr ? "未连接" : "—";
-  else if (!p) chip = st === "sleeping" ? "GPU 休眠中" : "当前不是 AI 配置";
+  else if (!p) { chip = st === "sleeping" ? "GPU 休眠中" : st === "ready" ? "当前模型 · 工作流模式" : (STATE_CN[st] || st); cls = st === "ready" ? "ok" : ""; }
   else if (BUSY.has(st)) { chip = (p.ai.title || p.title) + " · " + (STATE_CN[st] || st); cls = "busy"; }
   else if (ready && !aiModelReady()) { chip = (p.ai.title || p.title) + (AI.info && AI.info.error ? " · 不可用" : " · 加载模型中"); cls = AI.info && AI.info.error ? "bad" : "busy"; }
   else if (ready) { chip = (p.ai.title || p.title) + " · 就绪"; cls = "ok"; }
@@ -76,7 +76,7 @@ function aiPickRender() {
   const running = gst && gst.state && gst.state !== "sleeping" && gst.state !== "failed";
   const cur = gst && gst.profile && profiles && profiles.profiles && profiles.profiles.find(x => x.id === gst.profile);
   let html = "";
-  if (running && cur && !cur.ai) html += `<div class="card ai-note">GPU 现在运行的是「${esc(cur.title || cur.id)}」，不是 AI 配置。要用 AI，先在控制台<b>停止</b>，再从下面选一个配置唤醒。</div>`;
+  if (running && cur && !cur.ai) html += profileWorkspaceHTML(cur);
   if (!list.length) {
     html += `<div class="card empty">${isLocal() ? "没有找到 AI 启动配置。" : "网关还没有 AI 启动配置：需要先在 VPS 上运行 <code>gate-ai.py</code> 补丁并重建网关容器。"}</div>`;
     html += `<div class="ai-cards">${AI_ADD_CARD}</div>`;
@@ -87,6 +87,10 @@ function aiPickRender() {
         : running ? `<button class="btn sm" disabled>先停止当前 GPU</button>` : `<button class="btn primary sm" data-aiwake="${esc(p.id)}">用它唤醒</button>`;
       const bad = problem ? `<p class="err">无法使用：${esc(problem)}</p>` : "";
       if (!p.ai) { // 通用
+        if ((p.workflows || []).length) {
+          const current = running && cur && cur.id === p.id;
+          return `<div class="card ai-card"><div class="row between"><span class="pill">官方工作流</span><span class="muted small">${current ? "当前已部署" : `约 ${p.size_gb_default ?? "?"} GB`}</span></div><h3>${esc(p.title || p.id)}</h3><p class="muted small">${p.workflows.length} 个工作流 · 在 ComfyUI 中使用</p><p class="small">${esc(workflowLabel((p.workflows || []).find(w => w.id === p.app_default) || {}))}</p><div class="row end">${current ? `<button class="btn primary sm" data-profileworkflows="${esc(p.id)}">使用当前模型</button>` : wakeBtn}</div></div>`;
+        }
         const tid = it && it.spec && it.spec.template, tpl = (templates || []).find(t => t.id === tid);
         return `<div class="card ai-card"><div class="row between"><span class="pill ${problem ? "bad" : ""}">通用</span><span class="muted small mono">约 ${p.size_gb_default ?? "?"} GB</span></div>
           <h3>${esc(p.title || p.id)}</h3><p class="muted small">自定义模型 · ComfyUI 文件</p>
@@ -104,6 +108,7 @@ function aiPickRender() {
     }).join("") + AI_ADD_CARD + `</div>`;
   }
   $("#aiPick").innerHTML = html;
+  bindProfileWorkspace($("#aiPick"));
   $$("[data-aiwake]").forEach(b => b.onclick = () => aiWake(b.dataset.aiwake));
   $$("#aiPick [data-cmdel]").forEach(b => b.onclick = () => cmDelete(b.dataset.cmdel));
   $$("#aiPick [data-tpl]").forEach(s => s.onclick = () => { show("gen"); selectTpl(s.dataset.tpl); });

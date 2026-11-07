@@ -215,7 +215,18 @@ func checkImageModels(graph map[string]map[string]any) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("GPU 上未找到模型 %s（%s 可用模型 %d 个）。请查看启动日志的模型下载结果，使用对应的生图配置重新唤醒；这不是显存不足错误", wanted, class, len(names))
+			available := "无"
+			if len(names) > 0 {
+				shown := names
+				if len(shown) > 5 {
+					shown = shown[:5]
+				}
+				available = strings.Join(shown, "、")
+				if len(names) > 5 {
+					available += "…"
+				}
+			}
+			return fmt.Errorf("GPU 上未找到模型 %s（%s 可用模型 %d 个，当前可用：%s）。请核对当前启动配置和模型下载结果；这不是显存不足错误", wanted, class, len(names), available)
 		}
 	}
 	return nil
