@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -98,12 +100,50 @@ func TestStreamAllKinds(t *testing.T) {
 }
 
 func TestBuildPromptRequest(t *testing.T) {
+	old := dataDir
+	dataDir = t.TempDir()
+	t.Cleanup(func() { dataDir = old })
 	r := buildPromptRequest("FL2VA", 8, "女孩撑伞", "", "", 2)
-	if !strings.Contains(r.System, "integrated_multimodal_description") || !strings.Contains(r.User, "8.00") || !strings.Contains(r.User, "2 reference picture") {
+	if !strings.Contains(r.System, builtinPromptGuide) || strings.Contains(r.System, "MiniMax") || !strings.Contains(r.User, "8.00") || !strings.Contains(r.User, "2 reference picture") {
 		t.Fatalf("bad request: %s", r.User)
 	}
 	e := buildPromptRequest("T2VA", 30, "", "OLD PROMPT", "镜头推近", 0)
 	if !strings.Contains(e.User, "OLD PROMPT") || !strings.Contains(e.User, "15 seconds") {
 		t.Fatalf("bad edit request: %s", e.User)
+	}
+	// an imported guide replaces the built-in advice
+	os.MkdirAll(filepath.Dir(userGuidePath()), 0o700)
+	os.WriteFile(userGuidePath(), []byte("MY GUIDE"), 0o600)
+	if g := buildPromptRequest("T2VA", 6, "x", "", "", 0); !strings.Contains(g.System, "MY GUIDE") || strings.Contains(g.System, builtinPromptGuide) {
+		t.Fatalf("imported guide not used: %s", g.System)
+	}
+}
+
+func TestPromptGuideHandler(t *testing.T) {
+	old := dataDir
+	dataDir = t.TempDir()
+	t.Cleanup(func() { dataDir = old })
+	call := func(method, body string) (int, string) {
+		w := httptest.NewRecorder()
+		promptGuideHandler(w, httptest.NewRequest(method, "/api/prompt-guide", strings.NewReader(body)))
+		return w.Code, w.Body.String()
+	}
+	for _, bad := range []string{`{"name":"g.pdf","text":"x"}`, `{"name":"g.md","text":"  "}`, `{"name":"g.md","text":"` + strings.Repeat("a", guideMaxBytes+1) + `"}`} {
+		if c, _ := call("POST", bad); c != 400 {
+			t.Errorf("accepted %.40s", bad)
+		}
+	}
+	if c, _ := call("POST", `{"name":"H3 guide.TXT","text":"# guide"}`); c != 200 {
+		t.Fatal(c)
+	}
+	if _, b := call("GET", ""); !strings.Contains(b, `"imported":true`) {
+		t.Error(b)
+	}
+	if g, imp := promptGuide(); !imp || g != "# guide" {
+		t.Error(g)
+	}
+	call("DELETE", "")
+	if _, imp := promptGuide(); imp {
+		t.Error("still imported after clear")
 	}
 }

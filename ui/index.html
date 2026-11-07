@@ -320,7 +320,15 @@
         </div>
 
         <div class="sec-h"><span class="n">09</span><b>大模型 API</b><span class="d">用于「AI 写提示词」，Key 只保存在本机</span><span class="grow"></span><button type="button" class="btn primary xs" id="btnLLMAdd">＋ 添加</button></div>
-        <div class="card llm-card"><div id="llmList" class="llm-list"></div></div>
+        <div class="card llm-card"><div id="llmList" class="llm-list"></div>
+          <div class="guide-row">
+            <div class="grow"><b>H3 提示词指南</b> <span class="muted small" id="guideState">读取中…</span>
+              <p class="hint" style="margin:4px 0 0">默认用 Wakeloom 自带的通用写法说明。如果你有 MiniMax 官方的 H3 提示词指南，可以导入（.md 或 .txt），导入后「AI 写提示词」优先按它输出。<b>需自行从 MiniMax 官方获取，并确认所在地区适用其许可。</b>指南只保存在本机。</p></div>
+            <input type="file" id="guideFile" accept=".md,.txt,text/markdown,text/plain" hidden>
+            <button type="button" class="btn sm" id="btnGuideImport">导入 H3 提示词指南</button>
+            <button type="button" class="btn ghost sm" id="btnGuideClear" hidden>清除</button>
+          </div>
+        </div>
 
         <div class="sec-h"><span class="n">10</span><b>本地模式</b><span class="d">测试版 · 不用 VPS，软件直接控制你的 Colab</span></div>
         <div class="card local-card">
