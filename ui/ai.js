@@ -272,6 +272,7 @@ async function aiStream(c) {
         if (m.thinking) bot.thinking += m.thinking;
         if (m.content) bot.content += m.content;
         if (d.done) {
+          if (typeof obMark === "function") obMark("generate"); // first chat counts for the checklist
           const tps = d.eval_count && d.eval_duration ? (d.eval_count / (d.eval_duration / 1e9)).toFixed(1) : "";
           bot.stats = `${d.eval_count || 0} tokens${tps ? " · " + tps + " tok/s" : ""} · ${((performance.now() - t0) / 1000).toFixed(1)} s`;
         }

@@ -14,12 +14,14 @@ func main() {
 		ensureSingleInstance()
 	}
 	initDataDir()
+	hadConfig := configExisted()
 	lf, _ := os.OpenFile(filepath.Join(dataDir, "workbench.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if lf != nil {
 		log.SetOutput(lf)
 	}
 	loadConfig()
 	loadGoogleToken()
+	migrateOnboarding(hadConfig)
 	store.load()
 	startLocalGate()
 	go cleanupOldExe()

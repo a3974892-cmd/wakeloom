@@ -344,7 +344,11 @@ let templates = [], curTpl = null, lastJobForm = null;
 async function loadTemplates(selectId) {
   templates = await api("/api/templates");
   const list = $("#tplList");
-  list.innerHTML = templates.length ? templates.map(t => `<button data-id="${t.id}"><b>${esc(t.name)}</b><small>${t.nodes} 个节点 · ${t.fields.filter(f => f.primary).length} 个常用参数</small></button>`).join("") : `<p class="muted small">还没有模板</p>`;
+  list.innerHTML = templates.length ? templates.map(t => `<button data-id="${t.id}"><b>${esc(t.name)}</b><small>${t.nodes} 个节点 · ${t.fields.filter(f => f.primary).length} 个常用参数</small></button>`).join("") : `<div class="tpl-empty"><p class="muted small">还没有模板。可以先用内置模型，或导入自己的 ComfyUI 工作流：</p>
+      <button class="btn sm block" data-empty="ai">去 AI 页用内置模型</button>
+      <button class="btn sm block" data-empty="import">导入 ComfyUI API 工作流</button>
+      <a href="#" class="small" data-empty="how">怎么导出？</a></div>`;
+  $$("[data-empty]", list).forEach(b => b.onclick = e => { e.preventDefault(); emptyAction(b.dataset.empty); });
   $$("button", list).forEach(b => b.onclick = () => selectTpl(b.dataset.id));
   const id = selectId || (curTpl && curTpl.id) || localStorage.getItem("ckwb.tpl") || (templates[0] && templates[0].id);
   if (id && templates.find(t => t.id === id)) selectTpl(id); else { curTpl = null; renderForm(); }
@@ -672,7 +676,7 @@ async function loadJobs() {
   $("#qBadge").textContent = n || "";
   if (page !== "queue") return;
   const box = $("#jobList");
-  if (!jobs.length) { box.innerHTML = `<div class="card empty">队列是空的。去「生成」页提交任务。</div>`; box._keyed = false; return; }
+  if (!jobs.length) { box.innerHTML = `<div class="card empty">队列是空的。先唤醒 GPU 并提交任务。<div class="row gap center" style="margin-top:12px"><button class="btn sm" data-empty="console">去控制台唤醒</button><button class="btn sm" data-empty="ai">用 AI 页生图</button><button class="btn sm" data-empty="gen">去「生成」页</button></div></div>`; $$("[data-empty]", box).forEach(b => b.onclick = () => emptyAction(b.dataset.empty)); box._keyed = false; return; }
   if (!box._keyed) { box.innerHTML = ""; box._keyed = true; }
   // keyed update: only cards whose content changed are touched, and finished outputs
   // (video/img elements) are moved over untouched, so nothing reloads or flickers.
@@ -745,11 +749,12 @@ async function loadFiles() {
   const k = $("#kindFilter").value;
   const fs = r.files.filter(f => !k || f.kind === k);
   $("#fileGrid").innerHTML = fs.length ? fs.map(f => `<div class="file"><div class="media" data-path="${esc(f.path)}" data-kind="${f.kind}">${f.kind === "video" ? `<video src="${fileURL(f.path)}#t=0.1" preload="metadata" muted></video>` : f.kind === "image" ? `<img src="${fileURL(f.path)}" loading="lazy">` : `<span class="aud">♪</span>`}</div>
-    <div class="info"><div class="n" title="${esc(f.name)}">${esc(f.name)}</div><div class="row"><span>${esc(f.dir)} · ${fmtSize(f.size)}</span><span><button data-reveal="${esc(f.path)}">定位</button><button data-del="${esc(f.path)}">删除</button></span></div></div></div>`).join("") : `<div class="card empty" style="grid-column:1/-1">还没有结果文件</div>`;
+    <div class="info"><div class="n" title="${esc(f.name)}">${esc(f.name)}</div><div class="row"><span>${esc(f.dir)} · ${fmtSize(f.size)}</span><span><button data-reveal="${esc(f.path)}">定位</button><button data-del="${esc(f.path)}">删除</button></span></div></div></div>`).join("") : `<div class="card empty" style="grid-column:1/-1">还没有结果文件。先唤醒 GPU 并提交任务，生成的文件会自动下载到这里。<div class="row gap center" style="margin-top:12px"><button class="btn sm" data-empty="console">去控制台唤醒</button><button class="btn sm" data-empty="ai">用 AI 页生图</button></div></div>`;
   $$("#fileGrid .media").forEach(m => m.onclick = () => preview(m.dataset.path, m.dataset.kind));
   $$("#fileGrid [data-reveal]").forEach(b => b.onclick = () => api("/api/open", { json: { path: b.dataset.reveal } }));
   $$("#fileGrid [data-del]").forEach(b => b.onclick = async () => { if (!confirm("删除这个文件？")) return; await api("/api/delete-file", { json: { path: b.dataset.del } }); loadFiles(); });
   $$("#fileGrid video").forEach(v => { v.onmouseenter = () => v.play().catch(() => { }); v.onmouseleave = () => v.pause(); });
+  $$("#fileGrid [data-empty]").forEach(b => b.onclick = () => emptyAction(b.dataset.empty));
 }
 $("#kindFilter").onchange = loadFiles;
 $$("#kindSeg button").forEach(b => b.onclick = () => { $$("#kindSeg button").forEach(x => x.classList.toggle("on", x === b)); $("#kindFilter").value = b.dataset.k; loadFiles(); });
@@ -1279,11 +1284,22 @@ $("#btnPair").onclick = async () => {
   } catch (e) { $("#pairMsg").textContent = "配对失败：" + e.message + "（Access 可能拦截了 /api/auth/device/*，可改为手动粘贴令牌）"; }
 };
 
+// empty-state buttons (生成 / 队列 / 结果)
+function emptyAction(a) {
+  if (a === "ai" || a === "gen" || a === "console") return show(a);
+  if (a === "import") return $("#tplFile").click();
+  if (a === "how") return openModal(`<h3>怎么导出 ComfyUI API 工作流</h3><ol class="ob-howto">
+    <li>唤醒 GPU，点控制台的「打开 ComfyUI」。</li><li>在 ComfyUI 里打开或搭好你的工作流，先跑通一次。</li>
+    <li>菜单 → 文件（Workflow）→ <b>导出 (API)</b> / Export (API)，保存得到一个 .json。</li>
+    <li>回到这里点「导入 ComfyUI API 工作流」选这个文件。软件会自动识别提示词、图片、种子等参数。</li></ol>
+    <div class="row end"><button class="btn" data-close>知道了</button></div>`);
+}
+
 // ---------------- boot ----------------
 (async () => {
   const c = await loadSettings();
   await loadTemplates();
-  if (!c.gate_url) { show("settings"); toast("先填写网关地址和令牌"); }
+  if (!c.gate_url && c.onboarded && (c.mode || "gateway") === "gateway") { show("settings"); toast("先填写网关地址和令牌"); }
   await pollStatus();
   loadProfiles();
   connectEvents();
