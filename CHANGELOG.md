@@ -1,5 +1,9 @@
 # 更新日志
 
+## v1.18.1
+- 大模型唤醒时「注册模型到 Ollama」一步每 10 秒输出一次进度（已用时间、已写入大小、Ollama 状态），不再看起来像卡住。
+- 发版工作流升级到 actions/checkout@v7、actions/setup-go@v7（Node 24）。
+
 ## v1.18.0
 - 发布到 GitHub；自动更新改为从 GitHub Releases 下载。
 
