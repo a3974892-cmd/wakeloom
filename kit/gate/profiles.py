@@ -211,6 +211,14 @@ def _parse_ai(raw, models: dict, pid: str) -> dict | None:
                       "think": bool(llm.get("think", True)), "temperature": temp,
                       "system": str(llm.get("system") or "")[:4000]}
         uses = [mid]
+        projector = str(llm.get("projector") or "")
+        if projector:
+            if (projector == mid or projector not in models or
+                    not models[projector].dest.startswith("llm/") or not models[projector].dest.endswith(".gguf")):
+                raise ProfileError(f"{ctx}.llm.projector must be a separate model id under llm/<file>.gguf")
+            out["llm"]["projector"] = projector
+            out["llm"]["projector_dest"] = models[projector].dest
+            uses.append(projector)
     else:
         img = raw.get("image") or {}
         arch = str(img.get("arch") or "sdxl")

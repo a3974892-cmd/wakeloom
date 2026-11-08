@@ -65,6 +65,14 @@ func (p *LocalProfile) aiSummary() map[string]any {
 		}
 		out["llm"] = map[string]any{"model": mid, "dest": dest[mid], "name": str("name", "wb-llm"), "ctx": int(num("ctx", 32768)),
 			"think": think, "temperature": num("temperature", 0.7), "system": str("system", "")}
+		if projector := str("projector", ""); projector != "" {
+			if projector == mid || !strings.HasPrefix(dest[projector], "llm/") || !strings.HasSuffix(dest[projector], ".gguf") {
+				return nil
+			}
+			out["llm"].(map[string]any)["projector"] = projector
+			out["llm"].(map[string]any)["projector_dest"] = dest[projector]
+			uses = append(uses, projector)
+		}
 	} else {
 		arch := str("arch", "sdxl")
 		im := map[string]any{"arch": arch, "model": mid, "negative": str("negative", ""), "shift": num("shift", 1)}
@@ -156,6 +164,14 @@ func aiInfoHandler(w http.ResponseWriter, r *http.Request) {
 			out["ready"] = true
 		}
 	}
+	if out["type"] == "llm" && out["ready"] == true && out["llm_up"] == true {
+		llm, _ := out["llm"].(map[string]any)
+		if name, _ := llm["name"].(string); name != "" {
+			if vision, err := aiModelVision(r, name); err == nil {
+				out["vision"] = vision
+			}
+		}
+	}
 	jsonOut(w, 200, out)
 }
 
@@ -234,16 +250,51 @@ func checkImageModels(graph map[string]map[string]any) error {
 
 // aiChatHandler streams Ollama's NDJSON chat response straight through to the page.
 func aiChatHandler(w http.ResponseWriter, r *http.Request) {
+	if localMode() && aiVisionInstalling() {
+		errOut(w, 409, errors.New("正在补装视觉组件，请等待图片推理检查完成后发送"))
+		return
+	}
 	var in struct {
-		Model       string           `json:"model"`
-		Messages    []map[string]any `json:"messages"`
-		Think       *bool            `json:"think"`
-		Temperature *float64         `json:"temperature"`
-		NumCtx      int              `json:"num_ctx"`
+		Model           string              `json:"model"`
+		Messages        []map[string]any    `json:"messages"`
+		Think           *bool               `json:"think"`
+		Temperature     *float64            `json:"temperature"`
+		NumCtx          int                 `json:"num_ctx"`
+		Skills          []string            `json:"skills"`
+		SkillReferences map[string][]string `json:"skill_references"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 32<<20)).Decode(&in); err != nil || in.Model == "" || len(in.Messages) == 0 {
 		errOut(w, 400, errString("请求格式不对"))
 		return
+	}
+	var err error
+	in.Skills, err = aiResolveNamedSkills(in.Skills, in.Messages)
+	if err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	var skillUsage []aiSkillUsage
+	var contextUsage aiContextUsage
+	in.Messages, skillUsage, contextUsage, err = aiPrepareChatContext(in.Messages, in.Skills, in.SkillReferences)
+	if err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	hasImages, attachmentUsage, err := aiExpandStoredAttachments(r.Context(), in.Messages, 0)
+	if err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	if hasImages {
+		vision, err := aiModelVision(r, in.Model)
+		if err != nil {
+			errOut(w, 502, err)
+			return
+		}
+		if !vision {
+			errOut(w, 400, errors.New("当前部署的模型未启用图片理解。请使用已配置视觉组件的模型；文档和代码附件仍可直接读取"))
+			return
+		}
 	}
 	body := map[string]any{"model": in.Model, "messages": in.Messages, "stream": true, "keep_alive": -1}
 	if in.Think != nil {
@@ -293,6 +344,24 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
 	fl, _ := w.(http.Flusher)
+	if contextUsage.HistoryOmitted > 0 || contextUsage.SkillExcerpts > 0 || contextUsage.SkippedSkills > 0 {
+		json.NewEncoder(w).Encode(map[string]any{"wb_context": contextUsage})
+		if fl != nil {
+			fl.Flush()
+		}
+	}
+	if len(skillUsage) > 0 {
+		json.NewEncoder(w).Encode(map[string]any{"wb_skills": skillUsage})
+		if fl != nil {
+			fl.Flush()
+		}
+	}
+	if len(attachmentUsage) > 0 {
+		json.NewEncoder(w).Encode(map[string]any{"wb_attachments": attachmentUsage})
+		if fl != nil {
+			fl.Flush()
+		}
+	}
 	buf := make([]byte, 16<<10)
 	for {
 		n, err := resp.Body.Read(buf)
@@ -435,6 +504,19 @@ func sdxlGraph(ckpt, negative string, wd, ht, steps int, cfg float64, sampler, s
 }
 
 func aiRoutes(api *http.ServeMux) {
+	api.HandleFunc("GET /api/ai/vision/status", aiVisionStatus)
+	api.HandleFunc("POST /api/ai/vision/enable", aiVisionEnable)
+	api.HandleFunc("GET /api/ai/vision/update", aiVisionDownload)
+	api.HandleFunc("GET /api/ai/chat-state/{profile}", aiChatStateHandler)
+	api.HandleFunc("PUT /api/ai/chat-state/{profile}", aiChatStateHandler)
+	api.HandleFunc("GET /api/ai/skills", aiSkillList)
+	api.HandleFunc("GET /api/ai/skills/{id}", aiSkillDetail)
+	api.HandleFunc("POST /api/ai/skills/install", aiSkillInstall)
+	api.HandleFunc("POST /api/ai/skills/import", aiSkillPackagePreview)
+	api.HandleFunc("POST /api/ai/skills/install-batch", aiSkillBatchInstall)
+	api.HandleFunc("DELETE /api/ai/skills/{id}", aiSkillDelete)
+	api.HandleFunc("POST /api/ai/attachments", aiAttachmentUpload)
+	api.HandleFunc("GET /api/ai/attachments/{id}/preview/{index}", aiAttachmentPreview)
 	api.HandleFunc("GET /api/ai/info", aiInfoHandler)
 	api.HandleFunc("POST /api/ai/chat", aiChatHandler)
 	api.HandleFunc("POST /api/ai/image-template", aiImageTemplateHandler)

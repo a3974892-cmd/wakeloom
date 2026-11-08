@@ -1044,42 +1044,165 @@ def _ollama_bin():
     return shutil.which("ollama") or ("/usr/local/bin/ollama" if os.path.isfile("/usr/local/bin/ollama") else "")
 
 
-def ollama_install():
-    """Install the Ollama release tarball into /usr/local without install.sh: no apt / dpkg (whose lock the
-    concurrent cloudflared .deb install holds), no systemd. The .tar.zst is streamed through Python."""
-    import tarfile
-    logf = open(f"{LOG}/ollama_install.log", "a")
 
-    def note(msg):
-        logf.write(msg + "\n")
-        logf.flush()
+# ── wb-ollama-download: verified release, official fallback and visible progress ──
+OLLAMA_INSTALL_VERSION = "0.40.15"
+OLLAMA_INSTALL_PREFIX = "/usr/local"
+OLLAMA_INSTALL_SIZE = 1543547172
+OLLAMA_INSTALL_SHA256 = "628c018404a4206493efd38e46251c154ede5141b8b8dc85c659b3b027c47379"
+OLLAMA_INSTALL_URLS = (
+    "https://api.github.com/repos/ollama/ollama/releases/assets/715495290",
+    "https://github.com/ollama/ollama/releases/download/v0.40.15/ollama-linux-amd64.tar.zst",
+    "https://ollama.com/download/ollama-linux-amd64.tar.zst?version=0.40.15",
+)
 
-    try:
-        import zstandard
-    except ImportError:
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "zstandard"], stdout=logf, stderr=subprocess.STDOUT)
-        import zstandard
-    last = None
-    for attempt in range(1, 4):
-        try:
-            req = urllib.request.Request(OLLAMA_URL_DL, headers={"User-Agent": "wakeloom-kit"})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                note(f"download {r.geturl()[:120]} ({r.headers.get('Content-Length')} bytes)")
-                with zstandard.ZstdDecompressor().stream_reader(r) as zr, tarfile.open(fileobj=zr, mode="r|") as tf:
-                    try:
-                        tf.extractall("/usr/local", filter="tar")
-                    except TypeError:  # Python without extraction filters
-                        tf.extractall("/usr/local")
-            if os.path.isfile("/usr/local/bin/ollama"):
-                os.chmod("/usr/local/bin/ollama", 0o755)
-                note("installed /usr/local/bin/ollama")
+
+def _ollama_install_archive(dest, note):
+    import hashlib
+    import urllib.parse
+    errors = []
+    for round_no in range(1, 3):
+        for url in OLLAMA_INSTALL_URLS:
+            host = urllib.parse.urlsplit(url).hostname
+            note(f"download {host}, attempt {round_no}/2, version {OLLAMA_INSTALL_VERSION}")
+            try:
+                request = urllib.request.Request(url, headers={"User-Agent": "wakeloom-kit", "Accept": "application/octet-stream", "Cache-Control": "no-cache"})
+                with urllib.request.urlopen(request, timeout=30) as response, open(dest, "wb") as out:
+                    digest = hashlib.sha256()
+                    done, started, last = 0, time.monotonic(), time.monotonic()
+                    while True:
+                        block = response.read(8 << 20)
+                        if not block:
+                            break
+                        done += len(block)
+                        if done > OLLAMA_INSTALL_SIZE:
+                            raise RuntimeError("release exceeds its pinned size")
+                        out.write(block)
+                        digest.update(block)
+                        if time.monotonic() - last >= 5:
+                            note(f"downloaded {done / 1e6:.0f}/{OLLAMA_INSTALL_SIZE / 1e6:.0f} MB")
+                            last = time.monotonic()
+                        if time.monotonic() - started > 360:
+                            raise TimeoutError("release download exceeded 360 seconds")
+                if done != OLLAMA_INSTALL_SIZE or digest.hexdigest() != OLLAMA_INSTALL_SHA256:
+                    raise RuntimeError("release size/SHA-256 mismatch; nothing installed")
+                note("release size and SHA-256 verified")
                 return
-            last = RuntimeError("bin/ollama missing from the archive")
-        except Exception as e:  # noqa: BLE001
-            last = e
-        note(f"attempt {attempt} failed: {last!r}")
-        time.sleep(5 * attempt)
-    raise RuntimeError(f"Ollama install failed: {last!r}")
+            except Exception as error:
+                code = getattr(error, "code", None)
+                detail = f"HTTP {code}" if code else type(error).__name__ + ": " + str(error)[:180]
+                errors.append(f"{host}: {detail}")
+                note(f"{host} failed: {detail}; trying the next official source")
+        if round_no < 2:
+            time.sleep(3)
+    raise RuntimeError("Ollama official downloads failed: " + "; ".join(errors[-4:]))
+
+
+def _ollama_install_extract(archive, stage, note):
+    import tarfile
+    import pathlib
+    import zstandard
+    root = os.path.realpath(stage)
+    last = time.monotonic()
+    with open(archive, "rb") as source, zstandard.ZstdDecompressor().stream_reader(source) as reader, \
+            tarfile.open(fileobj=reader, mode="r|") as tar:
+        for member in tar:
+            name = pathlib.PurePosixPath(member.name)
+            if name.is_absolute() or ".." in name.parts or "\\" in member.name or ":" in member.name:
+                raise RuntimeError("unsafe path in Ollama release")
+            target = os.path.realpath(os.path.join(root, *name.parts))
+            if os.path.commonpath([root, target]) != root or member.isdev() or member.isfifo():
+                raise RuntimeError("unsafe entry in Ollama release")
+            if member.issym() or member.islnk():
+                link = pathlib.PurePosixPath(member.linkname)
+                base = os.path.dirname(target) if member.issym() else root
+                resolved = os.path.realpath(os.path.join(base, member.linkname))
+                if link.is_absolute() or os.path.commonpath([root, resolved]) != root:
+                    raise RuntimeError("unsafe link in Ollama release")
+            try:
+                tar.extract(member, stage, filter="data")
+            except TypeError:  # Older Python; path/type/link checks above still apply.
+                tar.extract(member, stage)
+            if time.monotonic() - last >= 5:
+                note("extracting the verified Ollama release")
+                last = time.monotonic()
+    binary = os.path.join(stage, "bin", "ollama")
+    if not os.path.isfile(binary) or os.path.getsize(binary) == 0:
+        raise RuntimeError("bin/ollama missing or empty in verified release")
+    if not os.path.isdir(os.path.join(stage, "lib", "ollama")):
+        raise RuntimeError("lib/ollama missing in verified release")
+    os.chmod(binary, 0o755)
+
+
+def _ollama_install_publish(stage, prefix, note):
+    import tempfile
+    env = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "CF_TUNNEL_TOKEN")}
+    binary = os.path.join(stage, "bin", "ollama")
+    checked = subprocess.run([binary, "--version"], env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, timeout=30)
+    version = checked.stdout.decode("utf-8", "replace")
+    if checked.returncode or OLLAMA_INSTALL_VERSION not in version:
+        raise RuntimeError("downloaded Ollama executable failed its version check")
+    # Stage and backup are on the installation filesystem. Restore old paths if publishing fails.
+    with tempfile.TemporaryDirectory(prefix=".wb-ollama-previous-", dir=prefix) as previous:
+        changes = []
+        try:
+            for relative in ("lib/ollama", "bin/ollama"):
+                target = os.path.join(prefix, relative)
+                old = os.path.join(previous, relative)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                os.makedirs(os.path.dirname(old), exist_ok=True)
+                existed = os.path.lexists(target)
+                if existed:
+                    os.replace(target, old)
+                changes.append((relative, existed))
+                os.replace(os.path.join(stage, relative), target)
+        except Exception:
+            for relative, existed in reversed(changes):
+                target, old = os.path.join(prefix, relative), os.path.join(previous, relative)
+                if os.path.lexists(target):
+                    os.replace(target, os.path.join(stage, relative))
+                if existed:
+                    os.replace(old, target)
+            raise
+    note("installed and checked Ollama " + OLLAMA_INSTALL_VERSION)
+
+
+def ollama_install():
+    """Use official asset/download routes for one pinned release; no install.sh, apt or systemd."""
+    import tempfile
+    os.makedirs(LOG, exist_ok=True)
+    with open(os.path.join(LOG, "ollama_install.log"), "a", encoding="utf-8") as log:
+        def note(message):
+            message = "KIT_OLLAMA_INSTALL " + message
+            log.write(message + "\n")
+            log.flush()
+            print(message, flush=True)
+
+        try:
+            import zstandard
+        except ImportError:
+            for attempt in (1, 2):
+                note(f"installing archive decoder, attempt {attempt}/2")
+                try:
+                    result = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "zstandard"],
+                                            stdout=log, stderr=subprocess.STDOUT, timeout=90)
+                    if result.returncode:
+                        raise RuntimeError("archive decoder installer failed")
+                    import zstandard
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise RuntimeError("Unable to install the zstandard archive decoder") from None
+        prefix = OLLAMA_INSTALL_PREFIX
+        with tempfile.TemporaryDirectory(prefix=".wb-ollama-install-", dir=prefix) as temporary:
+            archive = os.path.join(temporary, "release.tar.zst")
+            stage = os.path.join(temporary, "stage")
+            os.makedirs(stage)
+            _ollama_install_archive(archive, note)
+            _ollama_install_extract(archive, stage, note)
+            _ollama_install_publish(stage, prefix, note)
+# ── wb-ollama-download end ──
 
 
 def ollama_serve():
@@ -1125,14 +1248,70 @@ def _dir_bytes(d):
     return total
 
 
+def _ollama_seed_blob(path, every=10):
+    """Reuse the completed GGUF on the same filesystem instead of copying it into Ollama.
+    The normal CLI still hashes the source, registers the model and chooses its original defaults.
+    If linking is unavailable, leave both files untouched and use the original import path."""
+    import hashlib
+
+    blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
+    linked = None
+    try:
+        os.makedirs(blobs, exist_ok=True)
+        source = os.stat(path)
+        if source.st_size <= 0 or source.st_dev != os.stat(blobs).st_dev:
+            print("  blob reuse unavailable across filesystems; using standard import", flush=True)
+            return False
+
+        def identity(st):
+            return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
+
+        digest = hashlib.sha256()
+        done, last = 0, time.monotonic()
+        print("  preparing model reuse (SHA-256 check) …", flush=True)
+        with open(path, "rb") as f:
+            if identity(os.fstat(f.fileno())) != identity(source):
+                return False
+            for block in iter(lambda: f.read(8 << 20), b""):
+                digest.update(block)
+                done += len(block)
+                if time.monotonic() - last >= every:
+                    print(f"  checked {done / 1e9:.1f}/{source.st_size / 1e9:.1f} GB", flush=True)
+                    last = time.monotonic()
+            if identity(os.fstat(f.fileno())) != identity(source):
+                return False
+        if identity(os.stat(path)) != identity(source):
+            return False  # source changed; the original CLI will check it again
+        blob = os.path.join(blobs, "sha256-" + digest.hexdigest())
+        if os.path.lexists(blob):
+            return False  # never replace a pre-existing blob or link
+        os.link(path, blob)
+        linked = blob
+        if identity(os.stat(blob)) != identity(source):
+            os.unlink(blob)
+            return False
+        print(f"  reusing {source.st_size / 1e9:.1f} GB model without an extra copy", flush=True)
+        return True
+    except OSError as e:
+        if linked:
+            try:
+                os.unlink(linked)
+            except OSError:
+                pass
+        print(f"  blob reuse unavailable ({type(e).__name__}); using standard import", flush=True)
+        return False
+
+
 def _ollama_create(name, mf, path, every=10):
-    """`ollama create` copies the whole GGUF (tens of GB) into OLLAMA_MODELS and its progress bar is only
+    """Without a reusable blob, `ollama create` copies the GGUF into OLLAMA_MODELS; its progress bar is only
     carriage-return redraws, so the log looked frozen for minutes. Read its output ourselves and print a progress line
     every `every` seconds: elapsed time, the latest status from ollama, and how much has been written."""
     size = os.path.getsize(path)
     blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
-    base = _dir_bytes(blobs)
     print(f"registering {os.path.basename(path)} ({size / 1e9:.1f} GB) with Ollama as {name} …", flush=True)
+    t0 = time.time()
+    reused = _ollama_seed_blob(path, every)
+    base = _dir_bytes(blobs)
     p = subprocess.Popen([_ollama_bin() or "ollama", "create", name, "-f", mf], env=_ollama_env(),
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     state = {"last": "", "tail": []}
@@ -1153,10 +1332,10 @@ def _ollama_create(name, mf, path, every=10):
                         state["tail"] = (state["tail"] + [line])[-5:]
             else:
                 buf += ch
+        p.stdout.close()
 
     t = threading.Thread(target=reader, name="wb_ollama_create", daemon=True)
     t.start()
-    t0 = time.time()
     while True:
         try:
             rc = p.wait(timeout=every)
@@ -1164,7 +1343,8 @@ def _ollama_create(name, mf, path, every=10):
         except subprocess.TimeoutExpired:
             done = max(0, _dir_bytes(blobs) - base)
             pct = f" ({min(100, done * 100 // size)}%)" if size else ""
-            msg = f"  … {int(time.time() - t0)}s, written {done / 1e9:.1f}/{size / 1e9:.1f} GB{pct}"
+            msg = (f"  … {int(time.time() - t0)}s, reusing model file; preparing Ollama metadata" if reused else
+                   f"  … {int(time.time() - t0)}s, written {done / 1e9:.1f}/{size / 1e9:.1f} GB{pct}")
             if state["last"]:
                 msg += f" · {state['last'][:100]}"
             print(msg, flush=True)
@@ -1222,17 +1402,37 @@ def ai_finish(prep):
         if not os.path.isfile(path):
             raise RuntimeError(f"LLM model file missing: {llm['dest']}")
         mf = "/content/wb_Modelfile"
-        open(mf, "w").write(f"FROM {path}\n")
+        modelfile = f"FROM {path}\n"
+        if llm.get("projector_dest"):
+            projector = os.path.realpath(f"{COMFY}/models/{llm['projector_dest']}")
+            if not os.path.isfile(projector) or os.path.getsize(projector) == 0:
+                raise RuntimeError(f"Vision projector file missing or empty: {llm['projector_dest']}")
+            modelfile += f'FROM "{projector}"\n'
+            _ollama_seed_blob(projector)
+        with open(mf, "w") as f:
+            f.write(modelfile)
         _ollama_create(llm["name"], mf, path)
+        if llm.get("projector_dest"):
+            req = urllib.request.Request(OLLAMA_URL + "/api/show", method="POST",
+                                         data=json.dumps({"model": llm["name"]}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as response:
+                capabilities = json.load(response).get("capabilities") or []
+            if "vision" not in capabilities:
+                raise RuntimeError("Ollama did not enable vision for this model. Update Ollama and check projector compatibility.")
+            print("vision capability verified", flush=True)
         print("loading the model onto the GPU …", flush=True)
         req = urllib.request.Request(OLLAMA_URL + "/api/generate", method="POST",
                                      data=json.dumps({"model": llm["name"], "keep_alive": -1}).encode(),
                                      headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=1200).read()
+        with urllib.request.urlopen(req, timeout=1200) as response:
+            response.read()
         sh(f"{_ollama_bin()} ps", check=False, env=_ollama_env())
-        info = json.load(open(AI_INFO))
+        with open(AI_INFO) as f:
+            info = json.load(f)
         info["ready"] = True
-        json.dump(info, open(AI_INFO, "w"))
+        with open(AI_INFO, "w") as f:
+            json.dump(info, f)
 
 
 def install_custom_nodes():
@@ -1485,6 +1685,8 @@ def restart_comfy():
         time.sleep(1)
     raise RuntimeError("ComfyUI did not come back after restart")
 
+
+# wb-original-bootstrap: preserve the pre-deployment startup flow
 
 def main():
     os.makedirs(LOG, exist_ok=True)

@@ -790,6 +790,7 @@ type pyEntry struct {
 }
 type pyLLM struct {
 	Model       string  `yaml:"model" json:"model"`
+	Projector   string  `yaml:"projector,omitempty" json:"projector,omitempty"`
 	Name        string  `yaml:"name" json:"name"`
 	Ctx         int     `yaml:"ctx" json:"ctx"`
 	Think       bool    `yaml:"think" json:"think"`
@@ -928,7 +929,7 @@ func buildProfile(s CustomSpec) ([]byte, string, error) {
 		if !fileNameRE.MatchString(name) || strings.Contains(name, "..") {
 			return nil, "", errors.New("文件名不支持：" + name)
 		}
-		mid := map[string]string{"model": "main", "clip": "text-encoder", "vae": "vae"}[f.Role]
+		mid := map[string]string{"model": "main", "clip": "text-encoder", "vae": "vae", "projector": "vision-projector"}[f.Role]
 		if mid == "" || ids[f.Role] != "" {
 			nExtra++
 			mid = fmt.Sprintf("file-%d", nExtra)
@@ -952,6 +953,7 @@ func buildProfile(s CustomSpec) ([]byte, string, error) {
 			l = *s.LLM
 		}
 		l.Model, l.Name = ids["model"], id
+		l.Projector = ids["projector"]
 		l.Ctx = max(2048, min(262144, l.Ctx))
 		p.AI = &pyAI{Type: "llm", Title: title, LLM: &l}
 	case "sdxl", "chroma":
@@ -1029,6 +1031,9 @@ func customProblem(text []byte, id string) string {
 	used := map[string]bool{}
 	if p.AI != nil && p.AI.LLM != nil {
 		used[p.AI.LLM.Model] = true
+		if p.AI.LLM.Projector != "" {
+			used[p.AI.LLM.Projector] = true
+		}
 	}
 	if p.AI != nil && p.AI.Image != nil {
 		for _, m := range []string{p.AI.Image.Model, p.AI.Image.Clip, p.AI.Image.VAE} {
@@ -1115,6 +1120,9 @@ func specFromYAML(text []byte) (CustomSpec, error) {
 		if p.AI.LLM != nil {
 			s.Kind, s.LLM = "llm", p.AI.LLM
 			role[p.AI.LLM.Model] = "model"
+			if p.AI.LLM.Projector != "" {
+				role[p.AI.LLM.Projector] = "projector"
+			}
 		} else if p.AI.Image != nil {
 			s.Kind, s.Image = p.AI.Image.Arch, p.AI.Image
 			if s.Kind == "" {
@@ -1386,6 +1394,13 @@ func validateAI(raw any, models map[string]string) error {
 		}
 		if d, ok := models[mid]; !ok || !strings.HasPrefix(d, "llm/") || !strings.HasSuffix(d, ".gguf") {
 			return errors.New("ai.llm.model 必须指向存到 llm/<文件>.gguf 的模型")
+		}
+		if projector := fmt.Sprint(nonNilStr(l["projector"])); projector != "" {
+			d, ok := models[projector]
+			if projector == mid || !ok || !strings.HasPrefix(d, "llm/") || !strings.HasSuffix(d, ".gguf") {
+				return errors.New("ai.llm.projector 必须指向单独的 llm/<文件>.gguf 视觉组件")
+			}
+			uses = append(uses, projector)
 		}
 		name := "wb-llm"
 		if v, ok := l["name"]; ok && v != nil && v != "" {

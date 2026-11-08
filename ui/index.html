@@ -209,11 +209,23 @@
             <label class="seg-chk" title="开：先思考再回答，更准但更慢"><input type="checkbox" id="aiThink"><span>深度思考</span></label>
             <label class="ai-temp">温度 <input type="range" id="aiTemp" min="0" max="1.5" step="0.05"><b class="mono" id="aiTempV"></b></label>
             <button class="btn ghost xs" id="aiSysBtn">系统提示词</button>
+            <button type="button" class="btn ghost xs" id="aiSkillsBtn">技能</button>
             <span class="grow"></span>
             <span class="muted small mono" id="aiStats"></span>
           </div>
           <textarea id="aiSys" class="ai-sys" rows="3" placeholder="系统提示词（可选）：设定角色、语气、输出格式……" hidden></textarea>
           <div id="aiMsgs" class="ai-msgs"></div>
+          <div class="ai-attach-bar">
+            <button type="button" class="btn sm" id="aiAttachFiles">＋ 文件 / 压缩包</button>
+            <button type="button" class="btn ghost sm" id="aiAttachFolder">文件夹</button>
+            <button type="button" class="btn ghost sm" id="aiAttachCancel" hidden>取消读取</button>
+            <button type="button" class="btn sm" id="aiVisionBtn" hidden>启用看图</button>
+            <span class="muted small" id="aiAttachHint">可拖入文件，或粘贴截图</span>
+            <input id="aiFileInput" type="file" multiple hidden>
+            <input id="aiFolderInput" type="file" webkitdirectory multiple hidden>
+          </div>
+          <div id="aiAttachments" class="ai-attachments" hidden></div>
+          <p id="aiAttachStatus" class="small ai-attach-status" role="status" aria-live="polite" hidden></p>
           <div class="ai-input">
             <textarea id="aiText" rows="2" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
             <button class="btn primary" id="aiSend">发送</button>
@@ -376,7 +388,7 @@
           <div class="row gap wrap" style="margin-top:12px"><button type="button" class="btn sm" id="btnRerunGuide">重新运行新手引导</button><span class="muted small">从头走一遍：检查网络、连接方式、登录、第一次试用</span></div>
         </div>
 
-        <div class="save-bar"><button class="btn primary" type="submit">保存</button><button type="button" class="btn" id="btnTest">测试连接</button><span id="setMsg" class="muted small"></span><span class="grow"></span><span class="muted small mono" id="dataDirText"></span></div>
+        <div class="save-bar"><button class="btn primary" type="submit">保存</button><button type="button" class="btn" id="btnTest">测试连接</button><button type="button" class="btn ghost sm" id="btnPDFLicense">PDF 组件许可</button><span id="setMsg" class="muted small"></span><span class="grow"></span><span class="muted small mono" id="dataDirText"></span></div>
       </form>
     </section>
   </main>
@@ -388,6 +400,10 @@
 <div class="ob-mini" id="obMini" hidden></div>
 <div class="ob-coach" id="obCoach" hidden></div>
 <script src="app.js"></script>
+<script src="ai-attachments.js"></script>
+<script src="ai-vision.js"></script>
+<script src="ai-skills.js"></script>
+<script src="ai-chat-state.js"></script>
 <script src="ai.js"></script>
 <script src="models.js"></script>
 <script src="userdata.js"></script>

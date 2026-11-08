@@ -466,7 +466,7 @@ details.sub[open] summary::before { content: "− "; }
 .pill.llm { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .pill.img { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
 
-.ai-chat { display: grid; grid-template-columns: 220px 1fr; gap: 16px; height: calc(100vh - 150px); min-height: 420px; }
+.ai-chat { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; height: calc(100vh - 150px); min-height: 420px; min-width: 0; }
 .ai-convs { padding: 8px; display: flex; flex-direction: column; min-height: 0; }
 .ai-new { margin: 0 0 8px; }
 .ai-conv-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
@@ -478,19 +478,20 @@ details.sub[open] summary::before { content: "− "; }
 .ai-conv:hover .x { visibility: visible; }
 .ai-conv .x:hover { color: var(--bad); }
 .ai-conv-empty { padding: 6px 9px; }
-.ai-main { display: flex; flex-direction: column; min-height: 0; padding: 14px 16px; }
+.ai-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; padding: 14px 16px; }
 .ai-tools { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; border-bottom: 1px dashed var(--line2); flex-wrap: wrap; }
 .ai-temp { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
 .ai-temp input { width: 110px; accent-color: var(--inv); }
 .ai-sys { margin-top: 10px; }
-.ai-msgs { flex: 1; overflow: auto; padding: 14px 4px; display: flex; flex-direction: column; gap: 14px; }
+.ai-msgs { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 14px 4px; display: flex; flex-direction: column; gap: 14px; }
 .ai-hello { margin: auto; text-align: center; color: var(--muted); }
 .ai-hello b { color: var(--text); font-size: 15px; }
 .ai-msg.user { display: flex; justify-content: flex-end; }
 .ai-msg.user .bubble { max-width: 78%; background: var(--panel2); border: 1px solid var(--line); padding: 8px 12px; border-radius: 12px 12px 3px 12px; white-space: pre-wrap; word-break: break-word; }
+.ai-msg { min-width: 0; flex-shrink: 0; }
 .ai-msg.bot { max-width: 92%; }
 .ai-msg.bot .md { white-space: pre-wrap; word-break: break-word; line-height: 1.7; font-size: 13.5px; }
-.ai-msg.bot .md pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; white-space: pre; margin: 6px 0; }
+.ai-msg.bot .md pre { max-width: 100%; box-sizing: border-box; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; white-space: pre; margin: 6px 0; }
 .ai-msg.bot .md pre code { background: none; border: 0; padding: 0; }
 .ai-msg.bot .md .h { display: inline-block; margin-top: 4px; font-size: 14px; }
 .ai-think { margin-bottom: 8px; border-left: 2px solid var(--line2); padding-left: 10px; }
@@ -501,8 +502,40 @@ details.sub[open] summary::before { content: "− "; }
 .ai-acts:hover { opacity: 1; }
 .ai-acts .mono { margin-left: 8px; }
 .ai-input { display: flex; gap: 10px; align-items: flex-end; border-top: 1px dashed var(--line2); padding-top: 12px; }
-.ai-input textarea { font-family: var(--font); font-size: 13.5px; resize: none; max-height: 180px; }
+.ai-input textarea { flex: 1; min-width: 0; font-family: var(--font); font-size: 13.5px; resize: none; max-height: 180px; }
 .ai-input .btn { height: 38px; min-width: 70px; }
+.ai-attach-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 0; border-top: 1px dashed var(--line2); flex-shrink: 0; }
+.ai-attach-bar .small { margin-left: 4px; }
+.ai-attachments { max-height: 170px; overflow: auto; flex-shrink: 0; }
+.ai-attachment-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; white-space: normal; }
+.ai-attachment { border: 1px solid var(--line); background: var(--panel2); border-radius: 8px; padding: 7px 10px; min-width: 0; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.ai-attachment-label { display: flex; align-items: center; gap: 6px; }
+.ai-attachment-label b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px; }
+.ai-attachment-label .btn { margin-left: auto; }
+.ai-attachment-pictures { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.ai-attachment-pictures img { width: 90px; height: 70px; object-fit: contain; border-radius: 4px; }
+.ai-attachment summary { cursor: pointer; margin-top: 5px; }
+.ai-attachment details > div { max-height: 100px; overflow: auto; }
+.ai-attach-status { margin: 0 0 8px; overflow-wrap: anywhere; flex-shrink: 0; max-height: 60px; overflow: auto; }
+.ai-dragover { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.ai-skill-github { margin-top: 12px; flex-wrap: wrap; }
+.ai-skill-github input { min-width: 180px; }
+.ai-skill-list { max-height: 45vh; overflow: auto; display: grid; gap: 8px; }
+#aiInstalledSkillSearch { width: 100%; margin-bottom: 8px; }
+.ai-skill-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-wrap: anywhere; }
+.ai-skill-card p { margin: 6px 0; white-space: pre-wrap; }
+.ai-skill-preview { max-height: 30vh; overflow: auto; background: var(--panel2); padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-skill-catalog { display: grid; gap: 8px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--line2); border-radius: 8px; }
+.ai-skill-catalog select { width: 100%; min-height: 110px; }
+.ai-skill-catalog p { white-space: pre-wrap; margin: 0; }
+.ai-skill-mode { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.ai-skill-mode select { max-width: 240px; }
+.ai-skill-reference-files { max-height: 180px; overflow: auto; }
+.ai-skill-reference-files label { padding: 4px 0; overflow-wrap: anywhere; }
+.ai-skill-reference-files label span { flex: 1; min-width: 0; }
+.ai-skill-usage { margin-bottom: 10px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.ai-skill-usage summary { cursor: pointer; }
+.ai-skill-usage > div { margin: 6px 0; border-left: 2px solid var(--line2); padding-left: 8px; }
 
 .ai-img { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 18px; align-items: start; }
 .ai-img-form .row.gap { flex-wrap: wrap; }

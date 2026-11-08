@@ -139,11 +139,14 @@ function aiChatSetup(p) {
     const s = lsGet("ckwb.ai.chatset." + p.id, null) || { think: p.ai.llm.think !== false, temp: p.ai.llm.temperature ?? 0.7, sys: p.ai.llm.system || "" };
     $("#aiThink").checked = !!s.think; $("#aiTemp").value = s.temp; $("#aiTempV").textContent = (+s.temp).toFixed(2); $("#aiSys").value = s.sys || "";
     $("#aiSys").hidden = !s.sys;
+    aiLoadChatState(p.id);
     aiConvList(); aiMsgs();
   }
-  $("#aiText").disabled = !ready;
-  $("#aiSend").disabled = !ready && !AI.busy;
+  $("#aiText").disabled = !ready || !!AI.chatLoading;
+  $("#aiSend").disabled = (!ready || !!AI.chatLoading) && !AI.busy;
   $("#aiText").placeholder = ready ? "输入消息，Enter 发送，Shift+Enter 换行" : (AI.info && AI.info.error ? AI.info.error : "模型还在加载，GPU 就绪并完成「llm」阶段后就能聊天");
+  aiAttachmentsRender();
+  aiSkillsSync();
 }
 function aiSaveSet() {
   lsSet("ckwb.ai.chatset." + AI.pid, { think: $("#aiThink").checked, temp: +$("#aiTemp").value, sys: $("#aiSys").value });
@@ -155,7 +158,9 @@ $("#aiSysBtn").onclick = () => { $("#aiSys").hidden = !$("#aiSys").hidden; if (!
 
 function aiSaveConvs() {
   AI.convs = AI.convs.slice(0, 60);
-  lsSet(aiConvKey(), AI.convs); lsSet(aiConvKey() + ".cur", AI.cur);
+  try { localStorage.setItem(aiConvKey(), JSON.stringify(AI.convs)); localStorage.setItem(aiConvKey() + ".cur", JSON.stringify(AI.cur)); }
+  catch { if (AI.chatDiskPid !== AI.pid) toast("对话保存失败，本机存储空间可能已满；请先复制重要内容"); }
+  if (!AI.chatLoading && AI.chatDiskPid === AI.pid) aiPersistChatState(AI.pid, { conversations: AI.convs, current: AI.cur }).catch(() => {});
 }
 function aiConv() { return AI.convs.find(c => c.id === AI.cur); }
 function aiConvList() {
@@ -182,13 +187,14 @@ function mdLite(s) {
   }).join("");
 }
 function aiMsgHTML(m, i, last) {
-  if (m.role === "user") return `<div class="ai-msg user" data-i="${i}"><div class="bubble">${esc(m.content)}</div></div>`;
+  if (m.role === "user") return `<div class="ai-msg user" data-i="${i}"><div class="bubble">${esc(m.content)}${aiAttachmentCards(m.attachments || [])}</div></div>`;
   const think = m.thinking ? `<details class="ai-think" ${m.streaming && !m.content ? "open" : ""}><summary>思考过程${m.streaming && !m.content ? "…" : ""}</summary><div>${esc(m.thinking)}</div></details>` : "";
   const body = m.error ? `<p class="err">${esc(m.error)}</p>` : `<div class="md">${mdLite(m.content)}${m.streaming ? '<span class="caret"></span>' : ""}</div>`;
   const acts = m.streaming ? "" : `<div class="ai-acts"><button class="btn ghost xs" data-ma="copy" data-i="${i}">复制</button><button class="btn ghost xs" data-ma="use" data-i="${i}">用作生成提示词</button>${last ? `<button class="btn ghost xs" data-ma="again" data-i="${i}">重新回答</button>` : ""}<span class="muted small mono">${esc(m.stats || "")}</span></div>`;
-  return `<div class="ai-msg bot" data-i="${i}">${think}${body}${acts}</div>`;
+  return `<div class="ai-msg bot" data-i="${i}">${aiContextUsageHTML(m.context_usage)}${aiSkillUsageHTML(m.skill_context)}${aiAttachmentUsageHTML(m.attachment_context)}${think}${body}${acts}</div>`;
 }
 function aiMsgs() {
+  aiAttachmentsRender();
   const c = aiConv(), box = $("#aiMsgs");
   if (!c || !c.msgs.length) {
     box.innerHTML = `<div class="ai-hello"><b>${esc((aiCurrent() && (aiCurrent().ai.title || aiCurrent().title)) || "AI 对话")}</b><p class="muted small">模型运行在你的 Colab GPU 上，对话只保存在这台电脑。</p></div>`;
@@ -206,10 +212,13 @@ function aiUpdateLast() {
   const tmp = document.createElement("div"); tmp.innerHTML = aiMsgHTML(c.msgs[i], i, true);
   const fresh = tmp.firstChild;
   // keep the user's open/closed choice on the thinking block
-  const oldD = el && el.querySelector("details"), newD = fresh.querySelector("details");
+  const oldD = el && el.querySelector(".ai-think"), newD = fresh.querySelector(".ai-think");
   if (oldD && newD && oldD.dataset.touched) { newD.open = oldD.open; newD.dataset.touched = "1"; }
   if (el) el.replaceWith(fresh); else box.appendChild(fresh);
-  const d = fresh.querySelector("details"); if (d) d.addEventListener("toggle", () => d.dataset.touched = "1", { once: true });
+  const oldUsage = el && el.querySelector(".ai-skill-usage"), newUsage = fresh.querySelector(".ai-skill-usage");
+  if (oldUsage && newUsage) newUsage.open = oldUsage.open;
+  const oldAttachments = el && el.querySelector(".ai-attachment-usage"), newAttachments=fresh.querySelector(".ai-attachment-usage");if(oldAttachments&&newAttachments)newAttachments.open=oldAttachments.open;
+  const d = fresh.querySelector(".ai-think"); if (d) d.addEventListener("toggle", () => d.dataset.touched = "1", { once: true });
   $$("[data-ma]", fresh).forEach(b => b.onclick = () => aiMsgAct(b.dataset.ma, +b.dataset.i));
   if (nearBottom) box.scrollTop = box.scrollHeight;
 }
@@ -236,10 +245,16 @@ $("#aiSend").onclick = () => AI.busy ? AI.busy.abort() : aiSend();
 
 function aiSend() {
   const text = $("#aiText").value.trim();
-  if (!text || AI.busy || !aiModelReady()) return;
+  const attachments = aiPendingAttachments().slice();
+  if ((!text && !attachments.length) || AI.busy || AI.chatLoading || AIA.uploading || !aiModelReady()) return;
+  if (attachments.some(a => a.images > 0) && AI.info && AI.info.vision === false) {
+    aiAttachmentStatus("当前模型尚未加载视觉组件。点击「启用看图」完成补装后，这些图片可继续发送。", true);aiVisionOpen();return;
+  }
+  const draftKey = aiAttachmentDraftKey();
   let c = aiConv();
-  if (!c) { c = { id: Date.now().toString(36), title: text.slice(0, 24), msgs: [], created: Date.now() }; AI.convs.unshift(c); AI.cur = c.id; }
-  c.msgs.push({ role: "user", content: text });
+  if (!c) { c = { id: Date.now().toString(36), title: (text || attachments[0].name).slice(0, 24), msgs: [], created: Date.now() }; AI.convs.unshift(c); AI.cur = c.id; }
+  c.msgs.push({ role: "user", content: text, ...(attachments.length ? { attachments } : {}) });
+  delete AIA.drafts[draftKey]; delete AIA.status[draftKey];
   $("#aiText").value = "";
   aiSaveConvs(); aiConvList(); aiMsgs();
   aiStream(c);
@@ -250,17 +265,18 @@ async function aiStream(c) {
   const msgs = [];
   const sys = $("#aiSys").value.trim();
   if (sys) msgs.push({ role: "system", content: sys });
-  for (const m of c.msgs) if (!m.error) msgs.push({ role: m.role, content: m.content });
+  for (const m of c.msgs) if (!m.error) msgs.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map(a => ({ id: a.id })) } : {}) });
   const bot = { role: "assistant", content: "", thinking: "", streaming: true };
   c.msgs.push(bot); aiMsgs();
   const ctl = new AbortController(); AI.busy = ctl;
+  aiAttachmentsRender();
   $("#aiSend").textContent = "停止"; $("#aiSend").disabled = false;
   const t0 = performance.now();
   let raf = 0; const paint = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (AI.cur === c.id) aiUpdateLast(); }); };
   try {
     const r = await fetch("/api/ai/chat", {
       method: "POST", signal: ctl.signal, headers: { "X-Key": KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: p.ai.llm.name, messages: msgs, think: $("#aiThink").checked, temperature: +$("#aiTemp").value })
+      body: JSON.stringify({ model: AI.info?.llm?.name||p.ai.llm.name, messages: msgs, skills: aiEnabledSkills(), skill_references: aiSkillReferenceSelection(), num_ctx:p.ai.llm.ctx||32768, think: $("#aiThink").checked, temperature: +$("#aiTemp").value })
     });
     if (!r.ok) { let e = "HTTP " + r.status; try { e = (await r.json()).error || e; } catch { } throw new Error(e); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -273,6 +289,9 @@ async function aiStream(c) {
         if (!line) continue;
         let d; try { d = JSON.parse(line); } catch { continue; }
         if (d.error) throw new Error(d.error);
+        if (d.wb_skills) { bot.skill_context = d.wb_skills; paint(); continue; }
+        if (d.wb_context) {bot.context_usage=d.wb_context;paint();continue;}
+        if (d.wb_attachments) { bot.attachment_context=d.wb_attachments;paint();continue; }
         const m = d.message || {};
         if (m.thinking) bot.thinking += m.thinking;
         if (m.content) bot.content += m.content;

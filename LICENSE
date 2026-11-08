@@ -26,3 +26,7 @@ Third-party code
 kit/ (colab/setup.py, gate/*.py, profiles/) is derived from comfy-colab-kit
 (https://github.com/FireTable/comfy-colab-kit), MIT License,
 Copyright (c) 2026 FireTable. See kit/LICENSE-comfy-colab-kit.
+
+PDF text extraction uses github.com/ledongthuc/pdf, derived from rsc/pdf,
+Copyright (c) 2009 The Go Authors. BSD-3-Clause license;
+full notice is included in ui/licenses/ledongthuc-pdf.txt and in the app.

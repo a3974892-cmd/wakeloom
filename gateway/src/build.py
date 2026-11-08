@@ -29,7 +29,7 @@ SETUP = {E.SETUP!r}
 APP = {E.APP!r}
 SESSION = {E.SESSION!r}
 TEST_CUSTOM = {E.TEST_CUSTOM!r}
-NEW_PROFILES = {{"qwen38-27b-chat": {E.PROFILE_QWEN!r}, "realvisxl-v5": {E.PROFILE_REALVIS!r}, "chroma1-hd": {E.PROFILE_CHROMA!r}}}
+NEW_PROFILES = {{"qwen38-27b-chat": {E.PROFILE_QWEN!r}, "qwen38-27b-vision": {E.PROFILE_QWEN_VISION!r}, "realvisxl-v5": {E.PROFILE_REALVIS!r}, "chroma1-hd": {E.PROFILE_CHROMA!r}}}
 
 
 def main():
@@ -119,3 +119,19 @@ main()
 out.write_text(body, encoding="utf-8")
 compile(body, str(out), "exec")
 print("wrote", out)
+
+import bootstrap_patch
+bootstrap_out = out.with_name("gate-bootstrap.py")
+bootstrap_body = bootstrap_patch.generate(E.BOOTSTRAP_HELPERS, E.BOOTSTRAP_MAIN,
+    [E.BOOTSTRAP_LEGACY, E.BOOTSTRAP_LEGACY.replace(E.BOOT_NEW, E.BOOT_OLD), E.BOOTSTRAP_MAIN.split('\n    with Stage("deps"):\n')[0] + '\n'])
+compile(bootstrap_body, str(bootstrap_out), "exec")
+bootstrap_out.write_text(bootstrap_body, encoding="utf-8")
+print("wrote", bootstrap_out)
+
+import ollama_download_patch
+import ollama_installer
+ollama_out = out.with_name("gate-ollama-download.py")
+ollama_body = ollama_download_patch.generate(ollama_installer.INSTALL_SOURCE, ollama_installer.LEGACY_INSTALL_SOURCE)
+compile(ollama_body, str(ollama_out), "exec")
+ollama_out.write_text(ollama_body, encoding="utf-8")
+print("wrote", ollama_out)

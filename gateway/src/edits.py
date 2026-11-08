@@ -50,6 +50,14 @@ def _parse_ai(raw, models: dict, pid: str) -> dict | None:
                       "think": bool(llm.get("think", True)), "temperature": temp,
                       "system": str(llm.get("system") or "")[:4000]}
         uses = [mid]
+        projector = str(llm.get("projector") or "")
+        if projector:
+            if (projector == mid or projector not in models or
+                    not models[projector].dest.startswith("llm/") or not models[projector].dest.endswith(".gguf")):
+                raise ProfileError(f"{ctx}.llm.projector must be a separate model id under llm/<file>.gguf")
+            out["llm"]["projector"] = projector
+            out["llm"]["projector_dest"] = models[projector].dest
+            uses.append(projector)
     else:
         img = raw.get("image") or {}
         arch = str(img.get("arch") or "sdxl")
@@ -320,43 +328,7 @@ def _ollama_bin():
     return shutil.which("ollama") or ("/usr/local/bin/ollama" if os.path.isfile("/usr/local/bin/ollama") else "")
 
 
-def ollama_install():
-    """Install the Ollama release tarball into /usr/local without install.sh: no apt / dpkg (whose lock the
-    concurrent cloudflared .deb install holds), no systemd. The .tar.zst is streamed through Python."""
-    import tarfile
-    logf = open(f"{LOG}/ollama_install.log", "a")
-
-    def note(msg):
-        logf.write(msg + "\n")
-        logf.flush()
-
-    try:
-        import zstandard
-    except ImportError:
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "zstandard"], stdout=logf, stderr=subprocess.STDOUT)
-        import zstandard
-    last = None
-    for attempt in range(1, 4):
-        try:
-            req = urllib.request.Request(OLLAMA_URL_DL, headers={"User-Agent": "wakeloom-kit"})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                note(f"download {r.geturl()[:120]} ({r.headers.get('Content-Length')} bytes)")
-                with zstandard.ZstdDecompressor().stream_reader(r) as zr, tarfile.open(fileobj=zr, mode="r|") as tf:
-                    try:
-                        tf.extractall("/usr/local", filter="tar")
-                    except TypeError:  # Python without extraction filters
-                        tf.extractall("/usr/local")
-            if os.path.isfile("/usr/local/bin/ollama"):
-                os.chmod("/usr/local/bin/ollama", 0o755)
-                note("installed /usr/local/bin/ollama")
-                return
-            last = RuntimeError("bin/ollama missing from the archive")
-        except Exception as e:  # noqa: BLE001
-            last = e
-        note(f"attempt {attempt} failed: {last!r}")
-        time.sleep(5 * attempt)
-    raise RuntimeError(f"Ollama install failed: {last!r}")
-
+__WB_OLLAMA_INSTALL__
 
 def ollama_serve():
     os.makedirs(LOG, exist_ok=True)
@@ -401,14 +373,70 @@ def _dir_bytes(d):
     return total
 
 
+def _ollama_seed_blob(path, every=10):
+    """Reuse the completed GGUF on the same filesystem instead of copying it into Ollama.
+    The normal CLI still hashes the source, registers the model and chooses its original defaults.
+    If linking is unavailable, leave both files untouched and use the original import path."""
+    import hashlib
+
+    blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
+    linked = None
+    try:
+        os.makedirs(blobs, exist_ok=True)
+        source = os.stat(path)
+        if source.st_size <= 0 or source.st_dev != os.stat(blobs).st_dev:
+            print("  blob reuse unavailable across filesystems; using standard import", flush=True)
+            return False
+
+        def identity(st):
+            return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
+
+        digest = hashlib.sha256()
+        done, last = 0, time.monotonic()
+        print("  preparing model reuse (SHA-256 check) …", flush=True)
+        with open(path, "rb") as f:
+            if identity(os.fstat(f.fileno())) != identity(source):
+                return False
+            for block in iter(lambda: f.read(8 << 20), b""):
+                digest.update(block)
+                done += len(block)
+                if time.monotonic() - last >= every:
+                    print(f"  checked {done / 1e9:.1f}/{source.st_size / 1e9:.1f} GB", flush=True)
+                    last = time.monotonic()
+            if identity(os.fstat(f.fileno())) != identity(source):
+                return False
+        if identity(os.stat(path)) != identity(source):
+            return False  # source changed; the original CLI will check it again
+        blob = os.path.join(blobs, "sha256-" + digest.hexdigest())
+        if os.path.lexists(blob):
+            return False  # never replace a pre-existing blob or link
+        os.link(path, blob)
+        linked = blob
+        if identity(os.stat(blob)) != identity(source):
+            os.unlink(blob)
+            return False
+        print(f"  reusing {source.st_size / 1e9:.1f} GB model without an extra copy", flush=True)
+        return True
+    except OSError as e:
+        if linked:
+            try:
+                os.unlink(linked)
+            except OSError:
+                pass
+        print(f"  blob reuse unavailable ({type(e).__name__}); using standard import", flush=True)
+        return False
+
+
 def _ollama_create(name, mf, path, every=10):
-    """`ollama create` copies the whole GGUF (tens of GB) into OLLAMA_MODELS and its progress bar is only
+    """Without a reusable blob, `ollama create` copies the GGUF into OLLAMA_MODELS; its progress bar is only
     carriage-return redraws, so the log looked frozen for minutes. Read its output ourselves and print a progress line
     every `every` seconds: elapsed time, the latest status from ollama, and how much has been written."""
     size = os.path.getsize(path)
     blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
-    base = _dir_bytes(blobs)
     print(f"registering {os.path.basename(path)} ({size / 1e9:.1f} GB) with Ollama as {name} …", flush=True)
+    t0 = time.time()
+    reused = _ollama_seed_blob(path, every)
+    base = _dir_bytes(blobs)
     p = subprocess.Popen([_ollama_bin() or "ollama", "create", name, "-f", mf], env=_ollama_env(),
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     state = {"last": "", "tail": []}
@@ -429,10 +457,10 @@ def _ollama_create(name, mf, path, every=10):
                         state["tail"] = (state["tail"] + [line])[-5:]
             else:
                 buf += ch
+        p.stdout.close()
 
     t = threading.Thread(target=reader, name="wb_ollama_create", daemon=True)
     t.start()
-    t0 = time.time()
     while True:
         try:
             rc = p.wait(timeout=every)
@@ -440,7 +468,8 @@ def _ollama_create(name, mf, path, every=10):
         except subprocess.TimeoutExpired:
             done = max(0, _dir_bytes(blobs) - base)
             pct = f" ({min(100, done * 100 // size)}%)" if size else ""
-            msg = f"  … {int(time.time() - t0)}s, written {done / 1e9:.1f}/{size / 1e9:.1f} GB{pct}"
+            msg = (f"  … {int(time.time() - t0)}s, reusing model file; preparing Ollama metadata" if reused else
+                   f"  … {int(time.time() - t0)}s, written {done / 1e9:.1f}/{size / 1e9:.1f} GB{pct}")
             if state["last"]:
                 msg += f" · {state['last'][:100]}"
             print(msg, flush=True)
@@ -498,20 +527,43 @@ def ai_finish(prep):
         if not os.path.isfile(path):
             raise RuntimeError(f"LLM model file missing: {llm['dest']}")
         mf = "/content/wb_Modelfile"
-        open(mf, "w").write(f"FROM {path}\n")
+        modelfile = f"FROM {path}\n"
+        if llm.get("projector_dest"):
+            projector = os.path.realpath(f"{COMFY}/models/{llm['projector_dest']}")
+            if not os.path.isfile(projector) or os.path.getsize(projector) == 0:
+                raise RuntimeError(f"Vision projector file missing or empty: {llm['projector_dest']}")
+            modelfile += f'FROM "{projector}"\n'
+            _ollama_seed_blob(projector)
+        with open(mf, "w") as f:
+            f.write(modelfile)
         _ollama_create(llm["name"], mf, path)
+        if llm.get("projector_dest"):
+            req = urllib.request.Request(OLLAMA_URL + "/api/show", method="POST",
+                                         data=json.dumps({"model": llm["name"]}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as response:
+                capabilities = json.load(response).get("capabilities") or []
+            if "vision" not in capabilities:
+                raise RuntimeError("Ollama did not enable vision for this model. Update Ollama and check projector compatibility.")
+            print("vision capability verified", flush=True)
         print("loading the model onto the GPU …", flush=True)
         req = urllib.request.Request(OLLAMA_URL + "/api/generate", method="POST",
                                      data=json.dumps({"model": llm["name"], "keep_alive": -1}).encode(),
                                      headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=1200).read()
+        with urllib.request.urlopen(req, timeout=1200) as response:
+            response.read()
         sh(f"{_ollama_bin()} ps", check=False, env=_ollama_env())
-        info = json.load(open(AI_INFO))
+        with open(AI_INFO) as f:
+            info = json.load(f)
         info["ready"] = True
-        json.dump(info, open(AI_INFO, "w"))
+        with open(AI_INFO, "w") as f:
+            json.dump(info, f)
 
 
 def install_custom_nodes():'''
+
+from ollama_installer import INSTALL_SOURCE
+AI_SETUP = AI_SETUP.replace("__WB_OLLAMA_INSTALL__", INSTALL_SOURCE)
 
 BOOT_OLD = """        if not os.path.isdir(COMFY):
             procs.append(subprocess.Popen(
@@ -526,8 +578,234 @@ BOOT_NEW = """        if not os.path.isfile(f"{COMFY}/main.py"):
                 f"cp -a /content/_comfy_src/. {COMFY}/ && rm -rf /content/_comfy_src", shell=True))
 """
 
+BOOTSTRAP_LEGACY = '''    with Stage("bootstrap"):
+        # uv is only needed by the deps stage -> install it in the background while cloudflared
+        # and the ComfyUI clone run in parallel.
+        pip_uv = subprocess.Popen([sys.executable, "-m", "pip", "install", "-q", "-U", "uv"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        procs = []
+        if not shutil.which("cloudflared"):
+            procs.append(subprocess.Popen(
+                "wget -q -O /tmp/cf.deb https://github.com/cloudflare/cloudflared/releases/latest/download/"
+                "cloudflared-linux-amd64.deb && dpkg -i /tmp/cf.deb >/dev/null", shell=True))
+''' + BOOT_NEW + '''        for p in procs:
+            if p.wait() != 0:
+                raise RuntimeError("bootstrap step failed")
+        dl.sync_links()
+        start_tunnel()  # cloudflared retries until :8188 answers, so start it early
+        sh("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader", check=False)
+        pip_uv.wait()  # uv must be on PATH before the deps stage uses it
+'''
+
+BOOTSTRAP_HELPERS = r'''
+# ── wb-bootstrap: named, bounded bootstrap jobs with captured child-process output ──
+def _wb_bootstrap_tail(logfile):
+    with open(logfile, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - 8192))
+        text = f.read().decode("utf-8", "replace")
+    for key in ("HF_TOKEN", "CF_TUNNEL_TOKEN"):
+        value = os.environ.get(key)
+        if value:
+            text = text.replace(value, "[redacted]")
+    text = re.sub(r"(?i)(Bearer\s+)\S+", r"\1[redacted]", text)
+    text = re.sub(r"(https?://)[^\s/@]+:[^\s/@]+@", r"\1[redacted]@", text)
+    return "\n".join(text.splitlines()[-20:])
+
+
+def _wb_bootstrap_command(label, argv, cancel, attempts=1, timeout=300):
+    os.makedirs(LOG, exist_ok=True)
+    last = ""
+    for attempt in range(1, attempts + 1):
+        if cancel.is_set():
+            raise RuntimeError(f"{label}: canceled after another bootstrap failure")
+        logfile = os.path.join(LOG, f"bootstrap-{label}-{attempt}.log")
+        print(f"KIT_BOOTSTRAP {label} attempt {attempt}/{attempts}", flush=True)
+        started, next_note = time.monotonic(), time.monotonic() + 10
+        with open(logfile, "wb") as output:
+            p = subprocess.Popen(argv, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            reason = ""
+            while p.poll() is None:
+                elapsed = time.monotonic() - started
+                if cancel.is_set() or elapsed >= timeout:
+                    reason = "canceled" if cancel.is_set() else f"timeout after {timeout}s"
+                    try:
+                        if os.name == "posix":
+                            os.killpg(p.pid, signal.SIGKILL)
+                        else:
+                            p.kill()
+                    except ProcessLookupError:
+                        pass
+                    p.wait()
+                    break
+                try:
+                    p.wait(timeout=min(1, max(0.01, timeout - elapsed)))
+                except subprocess.TimeoutExpired:
+                    pass
+                if time.monotonic() >= next_note:
+                    print(f"KIT_BOOTSTRAP {label} waiting {int(elapsed)}s", flush=True)
+                    next_note = time.monotonic() + 10
+        if p.returncode == 0 and not reason:
+            print(f"KIT_BOOTSTRAP {label} done", flush=True)
+            return
+        tail = _wb_bootstrap_tail(logfile)
+        last = f"{label}: {reason or 'exit ' + str(p.returncode)}"
+        print(f"KIT_BOOTSTRAP {last}; log={logfile}", flush=True)
+        for line in tail.splitlines():
+            print(f"  [{label}] {line}", flush=True)
+        if cancel.is_set():
+            raise RuntimeError(last)
+        if attempt < attempts:
+            print(f"KIT_BOOTSTRAP {label} retrying", flush=True)
+            cancel.wait(3)
+    detail = tail.splitlines()[-1] if tail else "no child-process output"
+    raise RuntimeError(f"bootstrap {last}: {detail}"[:700])
+
+
+def _wb_bootstrap_download(urls, package, cancel, expected_size, expected_sha):
+    import hashlib
+    import urllib.request
+    import urllib.error
+    deadline = time.monotonic() + 180
+    last = "no download route"
+    for attempt in range(1, 3):
+        for route, url in enumerate(urls, 1):
+            if cancel.is_set():
+                raise RuntimeError("cloudflared-download: canceled")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"cloudflared-download: total timeout; {last}")
+            print(f"KIT_BOOTSTRAP cloudflared-download route {route} attempt {attempt}/2", flush=True)
+            verified = False
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "wakeloom-kit",
+                    "Accept": "application/octet-stream", "Cache-Control": "no-cache"})
+                digest, size = hashlib.sha256(), 0
+                route_deadline = min(deadline, time.monotonic() + 90)
+                next_note = time.monotonic() + 5
+                with urllib.request.urlopen(req, timeout=15) as response, open(package, "wb") as output:
+                    if response.status != 200:
+                        raise RuntimeError(f"unexpected HTTP {response.status}")
+                    while True:
+                        if cancel.is_set():
+                            raise RuntimeError("canceled")
+                        if time.monotonic() >= route_deadline:
+                            raise RuntimeError("download timeout")
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > expected_size:
+                            raise RuntimeError("package exceeds expected size")
+                        output.write(chunk)
+                        digest.update(chunk)
+                        if time.monotonic() >= next_note:
+                            print(f"KIT_BOOTSTRAP cloudflared-download {size}/{expected_size} bytes", flush=True)
+                            next_note = time.monotonic() + 5
+                if size != expected_size or digest.hexdigest() != expected_sha:
+                    raise RuntimeError("package size or SHA-256 mismatch")
+                verified = True
+                print("KIT_BOOTSTRAP cloudflared-download verified", flush=True)
+                return
+            except Exception as exc:
+                # URLs may redirect to signed assets; never include them in public logs.
+                if isinstance(exc, urllib.error.HTTPError):
+                    last = f"HTTP {exc.code}"
+                elif isinstance(exc, RuntimeError):
+                    last = str(exc)
+                else:
+                    last = type(exc).__name__
+                print(f"KIT_BOOTSTRAP cloudflared-download route {route}: {last}", flush=True)
+                if cancel.is_set():
+                    raise RuntimeError("cloudflared-download: canceled") from None
+            finally:
+                if not verified and os.path.exists(package):
+                    os.unlink(package)
+        if attempt < 2:
+            cancel.wait(2)
+    raise RuntimeError(f"cloudflared-download: official routes failed; {last}")
+
+
+def _wb_bootstrap_cloudflared(cancel):
+    if shutil.which("cloudflared"):
+        print("KIT_BOOTSTRAP cloudflared already installed", flush=True)
+        return
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="wb-cloudflared-") as folder:
+        package = os.path.join(folder, "cloudflared.deb")
+        # Pinned official 2026.10.7 asset: API route avoids the failing browser-download path.
+        _wb_bootstrap_download([
+            "https://api.github.com/repos/cloudflare/cloudflared/releases/assets/692817258",
+            "https://github.com/cloudflare/cloudflared/releases/download/2026.10.7/cloudflared-linux-amd64.deb",
+        ], package, cancel, 19925068, "70b1a1e0f46033ffc8d90b406e554044ba6cbf2e4360295ef1163aed31e09393")
+        _wb_bootstrap_command("cloudflared-install", ["dpkg", "-i", package], cancel, timeout=180)
+    if not shutil.which("cloudflared"):
+        raise RuntimeError("bootstrap cloudflared-install: executable missing after dpkg")
+
+
+def _wb_bootstrap_comfy(cfg, cancel):
+    if os.path.isfile(os.path.join(COMFY, "main.py")):
+        print("KIT_BOOTSTRAP ComfyUI already installed", flush=True)
+        return
+    import tempfile
+    # Clone beside ongoing downloads. Only owned temporary checkouts are removed on retries.
+    for attempt in range(1, 4):
+        with tempfile.TemporaryDirectory(prefix="wb-comfy-") as folder:
+            checkout = os.path.join(folder, "source")
+            try:
+                _wb_bootstrap_command(f"comfyui-clone-{attempt}", ["git", "clone", "-q", cfg["repo"], checkout], cancel)
+            except RuntimeError:
+                if attempt == 3 or cancel.is_set():
+                    raise
+                print("KIT_BOOTSTRAP comfyui-clone retrying with a clean temporary checkout", flush=True)
+                cancel.wait(3)
+                continue
+            _wb_bootstrap_command("comfyui-checkout", ["git", "-C", checkout, "checkout", "-q", cfg["commit"]], cancel)
+            os.makedirs(COMFY, exist_ok=True)
+            # Match the original merge operation: preserve downloads and existing model links.
+            _wb_bootstrap_command("comfyui-copy", ["cp", "-a", checkout + "/.", COMFY + "/"], cancel, timeout=180)
+            if not os.path.isfile(os.path.join(COMFY, "main.py")):
+                raise RuntimeError("bootstrap comfyui-copy: main.py missing after checkout merge")
+            return
+
+
+def _wb_bootstrap_uv(cancel):
+    try:
+        _wb_bootstrap_command("uv-install", [sys.executable, "-m", "pip", "install", "-q", "-U", "uv"],
+                              cancel, attempts=2, timeout=180)
+    except Exception:
+        if cancel.is_set():
+            raise
+        # Preserve the existing deps stage's pip fallback when uv is unavailable.
+        print("KIT_BOOTSTRAP uv unavailable; dependencies will use the existing pip fallback", flush=True)
+
+
+def _wb_bootstrap(cfg):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    cancel = threading.Event()
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="wb-bootstrap") as pool:
+        jobs = [pool.submit(_wb_bootstrap_cloudflared, cancel), pool.submit(_wb_bootstrap_comfy, cfg, cancel),
+                pool.submit(_wb_bootstrap_uv, cancel)]
+        try:
+            for job in as_completed(jobs):
+                job.result()
+        except Exception:
+            cancel.set()
+            raise
+# ── wb-bootstrap end ──
+
+
+def main():'''
+
+BOOTSTRAP_MAIN = '''    with Stage("bootstrap"):
+        _wb_bootstrap(cfg)
+        dl.sync_links()
+        start_tunnel()
+        sh("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader", check=False)
+
+    with Stage("deps"):
+'''
+
 SETUP = [
-    (BOOT_OLD, BOOT_NEW),
     ('        return fetch_only()\n    cfg = PLAN["comfyui"]\n',
      '        return fetch_only()\n'
      '    if not PLAN.get("models"):  # wb-empty: nothing to download usually means a broken profile\n'
@@ -539,6 +817,8 @@ SETUP = [
      '    os.makedirs(f"{base}/wb_ai", exist_ok=True)\n'
      '    open(f"{base}/wb_ai/__init__.py", "w").write(AI_NODE)\n'),
     ('    with Stage("bootstrap"):\n', '    ai_prep = ai_prepare()\n    with Stage("bootstrap"):\n'),
+    ('\ndef main():', '# wb-original-bootstrap: preserve the pre-deployment startup flow\n\ndef main():', ('# ── wb-bootstrap:', '\ndef main():')),
+    ('', BOOTSTRAP_LEGACY + '\n    with Stage("deps"):\n', ('    with Stage("bootstrap"):\n', '\n    with Stage("deps"):\n')),
     ('    if not any(t.name == "kit_watchdog" for t in threading.enumerate()):\n',
      '    ai_finish(ai_prep)\n    if not any(t.name == "kit_watchdog" for t in threading.enumerate()):\n'),
     ('        if time.time() - t0 > max_s:\n',
@@ -755,6 +1035,42 @@ ai:
   llm:
     model: qwen38-27b-q8
     name: qwen3.8-27b
+    ctx: 32768
+    think: false
+    temperature: 0.7
+"""
+
+PROFILE_QWEN_VISION = """\
+# Optional vision profile. Keep the existing text-only profile unchanged.
+id: qwen38-27b-vision
+title: Qwen3.8 27B · Q8_0 对话与看图
+accelerator: G4
+comfyui:
+  repo: https://github.com/comfyanonymous/ComfyUI
+  commit: 2c75dc1b
+  args: [--preview-method, auto]
+frontend:
+  package: comfyui-frontend-package==1.57.6
+models:
+- id: qwen38-27b-q8
+  dest: llm/Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf
+  url: hf://huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF@1c69098e9c32db6dc06fc48f1d6cc75ad07da89e/Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf
+  sha256: 427b9416c2aba9d21da4e90ddac50a2bc8b6d0bfef675af3580a43aa38e000c3
+  license: apache-2.0
+  size_gb: 29.05
+- id: qwen38-vision-projector
+  dest: llm/mmproj-model-bf16.gguf
+  url: hf://huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF@1c69098e9c32db6dc06fc48f1d6cc75ad07da89e/mmproj-model-bf16.gguf
+  sha256: c9a09064683620bea3d3bfed5d4462e1a97a7d2fff7e5045d6862a0a85eeb5b5
+  license: apache-2.0
+  size_gb: 0.94
+ai:
+  type: llm
+  title: Qwen3.8 27B · 对话与看图
+  llm:
+    model: qwen38-27b-q8
+    projector: qwen38-vision-projector
+    name: qwen3.8-27b-vision
     ctx: 32768
     think: false
     temperature: 0.7

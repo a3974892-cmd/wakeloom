@@ -297,6 +297,9 @@ func worker() {
 var autoStopped bool
 
 func maybeAutoStop() {
+	if localMode() && aiVisionInstalling() {
+		return
+	}
 	c := getConfig()
 	if !c.AutoStopIdle || autoStopped || time.Since(lastActivity) < 3*time.Minute || store.pending() > 0 {
 		return

@@ -31,6 +31,19 @@ jobs:
         run: go test ./...
       - name: Image model checks
         run: python3 gateway/src/test_image_models.py
+      - name: Ollama import compatibility
+        run: python3 gateway/src/test_ollama_import.py
+      - name: Optional vision profile checks
+        run: python3 gateway/src/test_vision_profile.py
+      - name: Running-session vision installer checks
+        run: python3 gateway/src/test_enable_vision.py
+      - name: Bootstrap retry and diagnostic checks
+        run: python3 gateway/src/test_bootstrap.py
+      - name: Ollama download failover checks
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ollama-tests"
+          "$RUNNER_TEMP/ollama-tests/bin/python" -m pip install zstandard==0.25.0
+          "$RUNNER_TEMP/ollama-tests/bin/python" gateway/src/test_ollama_download.py
       - name: Build
         run: |
           mkdir dist
@@ -47,6 +60,16 @@ jobs:
                      "sha256": sha, "size": size, "notes": notes}, open("dist/latest.json", "w"), ensure_ascii=False)
           PY
           cp gateway/gate-*.py dist/
+          cp gateway/enable-*-vision.py gateway/enable-vision-on-vps.py dist/
+          python3 - "$V" <<'PY'
+          from pathlib import Path
+          import sys, zipfile
+          files = sorted(Path("gateway").glob("gate-*.py"))
+          files += [Path("gateway/enable-qwen-vision.py"), Path("gateway/enable-vision-on-vps.py"), Path("gateway/README.md")]
+          with zipfile.ZipFile(f"dist/Wakeloom-{sys.argv[1]}-gateway.zip", "w", zipfile.ZIP_DEFLATED) as z:
+              for path in files:
+                  z.write(path, path.name)
+          PY
           cat dist/latest.json
       - name: Release
         env:

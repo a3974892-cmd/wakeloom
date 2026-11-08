@@ -1,0 +1,33 @@
+# Optional vision profile. Keep the existing text-only profile unchanged.
+id: qwen38-27b-vision
+title: Qwen3.8 27B · Q8_0 对话与看图
+accelerator: G4
+comfyui:
+  repo: https://github.com/comfyanonymous/ComfyUI
+  commit: 2c75dc1b
+  args: [--preview-method, auto]
+frontend:
+  package: comfyui-frontend-package==1.57.6
+models:
+- id: qwen38-27b-q8
+  dest: llm/Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf
+  url: hf://huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF@1c69098e9c32db6dc06fc48f1d6cc75ad07da89e/Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf
+  sha256: 427b9416c2aba9d21da4e90ddac50a2bc8b6d0bfef675af3580a43aa38e000c3
+  license: apache-2.0
+  size_gb: 29.05
+- id: qwen38-vision-projector
+  dest: llm/mmproj-model-bf16.gguf
+  url: hf://huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF@1c69098e9c32db6dc06fc48f1d6cc75ad07da89e/mmproj-model-bf16.gguf
+  sha256: c9a09064683620bea3d3bfed5d4462e1a97a7d2fff7e5045d6862a0a85eeb5b5
+  license: apache-2.0
+  size_gb: 0.94
+ai:
+  type: llm
+  title: Qwen3.8 27B · 对话与看图
+  llm:
+    model: qwen38-27b-q8
+    projector: qwen38-vision-projector
+    name: qwen3.8-27b-vision
+    ctx: 32768
+    think: false
+    temperature: 0.7

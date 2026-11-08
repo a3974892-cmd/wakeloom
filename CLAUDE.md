@@ -16,6 +16,9 @@ Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，
 | `localgate.go`（`//go:embed kit`）、`colab.go`、`colab_auth.go`、`libstore.go`、`local_api.go` | 本地模式（实验）：程序自己当网关，用 Google 账号直接开关 Colab（非公开接口） |
 | `jobs.go`、`templates.go`、`labels.go` | 任务队列、ComfyUI API 工作流模板、参数中文名/推荐值 |
 | `ai.go`、`llm.go` | AI 页对话（经 ComfyUI 的 `/wbllm` 路由到 VM 上的 Ollama）、AI 写提示词（内置原创的通用说明 `builtinPromptGuide`；用户可导入 H3 官方指南到 `<dataDir>/prompts/h3_guide.md`，有则优先用） |
+| `ai_attachments.go`、`ai_skills*.go`、`ai_chat_state.go` | AI 对话附件解析、SKILL.md 与 GitHub 导入、本机持久化；内容存数据目录，绝不把用户附件或导入技能嵌入 exe。图片核对实际视觉能力；技能脚本不执行 |
+| `ai_attachment_store.go`、`ai_attachment_context.go`、`ai_skill_batch.go` | 大附件使用磁盘内容缓存并按问题选段，回复披露实际片段；技能整库批量安装、重试和用户消息点名临时调用。安装全部不等于全部启用 |
+| `ai_context.go`、`ai_vision.go`、`ui/ai-vision.js` | 自动打包近期上下文/技能节选，保留完整本机数据；本地已就绪会话可补装匹配视觉组件，按 VM 实际模型名发送。网关补装需独立 VPS helper，不能通过聊天代理执行任意安装命令 |
 | `gpu.go` | GPU/系统负载面板 |
 | `custom_models.go` | 「添加模型」：解析 HF 链接、读 HF API（走 proxy.go 的 transport）、识别四种类型、推荐 GPU、生成并校验 profile.yaml（`validateProfileYAML` 是 kit/gate/profiles.py `parse_profile` 的 Go 版）；本地网关的 `/_gate/custom-profiles` |
 | `ui/models.js` | 「添加模型」弹窗、设置里的自定义模型列表（依赖 app.js / ai.js 的全局函数） |
