@@ -4,7 +4,9 @@ Wakeloom 是按需使用 Colab GPU 的桌面工作台，提供 ComfyUI 图片/�
 
 ## 当前版本
 
-2026-11-08：用户授权将测试版界面与诊断改动作为 **v1.21.4** 发布，并整理仓库首页。源码准备已完成；发布成功状态须核对 GitHub Actions、Release 与自动更新清单，不能只看源码版本号。
+2026-11-08：**[v1.21.4 Windows 版已发布](https://github.com/a3974892-cmd/wakeloom/releases/tag/v1.21.4)**，发布源码为 `d92a1f28f9e8e7c5f4fcfd9bad44826227a9e0fc`，Actions `42486522674` 成功。用户随后要求 Linux 等测试后再发布，已通过 Actions `42486950644` 撤下本次全部 Linux 附件及更新清单，后续正式发布流程仅构建 Windows；Linux 源码保留供测试。
+
+已核对发布标签、仓库首页的 11 个入口、`releases/latest` 指向和实际下载的 Windows exe（11,187,200 字节，SHA-256 `a7e3027055f9402d35cecb6d802679c674f91e5fddfd8f274fb0aac7414a49bb`）。Windows 更新清单大小/摘要一致，网关 ZIP 完整。实际下载的 exe 已通过隔离界面与诊断日志检查，未操作真实 GPU。
 
 本轮包含系统字体和卡片留白调整、原创 W 标志、图标导航、API 设置内边距修正、持久化诊断日志和本地引导步骤日志/有限重试。此前测试版的聊天附件、批量技能和数据兼容行为保持。Linux 构建仍属实验性，真实桌面与 Colab 流程需实机验收。
 
