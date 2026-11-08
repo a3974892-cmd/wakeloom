@@ -1,12 +1,12 @@
 # Publishes a release: tests, Windows build, GitHub Release with the exe + latest.json
 # (latest.json is what the app's auto-updater reads).
 # Start it by updating AppVersion on main, pushing a tag vX.Y.Z, or "Run workflow",
-# which releases the version written in update.go (AppVersion).
+# which releases the version written in app/update.go (AppVersion).
 name: release
 on:
   push:
     branches: ["main"]
-    paths: ["update.go"]
+    paths: ["app/update.go"]
     tags: ["v*"]
   workflow_dispatch:
 permissions:
@@ -19,35 +19,36 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.24.7"
+          cache-dependency-path: app/go.sum
       - name: Version
         run: |
-          v=$(sed -n 's/^const AppVersion = "\(.*\)"/\1/p' update.go)
+          v=$(sed -n 's/^const AppVersion = "\(.*\)"/\1/p' app/update.go)
           if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "$v" ]; then
-            echo "tag $GITHUB_REF_NAME does not match update.go AppVersion $v"; exit 1
+            echo "tag $GITHUB_REF_NAME does not match app/update.go AppVersion $v"; exit 1
           fi
           echo "V=$v" >> "$GITHUB_ENV"
           echo "TAG=v$v" >> "$GITHUB_ENV"
       - name: Test
-        run: go test ./...
+        run: go -C app test ./...
       - name: Image model checks
-        run: python3 gateway/src/test_image_models.py
+        run: python3 app/gateway/src/test_image_models.py
       - name: Ollama import compatibility
-        run: python3 gateway/src/test_ollama_import.py
+        run: python3 app/gateway/src/test_ollama_import.py
       - name: Optional vision profile checks
-        run: python3 gateway/src/test_vision_profile.py
+        run: python3 app/gateway/src/test_vision_profile.py
       - name: Running-session vision installer checks
-        run: python3 gateway/src/test_enable_vision.py
+        run: python3 app/gateway/src/test_enable_vision.py
       - name: Bootstrap retry and diagnostic checks
-        run: python3 gateway/src/test_bootstrap.py
+        run: python3 app/gateway/src/test_bootstrap.py
       - name: Ollama download failover checks
         run: |
           python3 -m venv "$RUNNER_TEMP/ollama-tests"
           "$RUNNER_TEMP/ollama-tests/bin/python" -m pip install zstandard==0.25.0
-          "$RUNNER_TEMP/ollama-tests/bin/python" gateway/src/test_ollama_download.py
+          "$RUNNER_TEMP/ollama-tests/bin/python" app/gateway/src/test_ollama_download.py
       - name: Build
         run: |
           mkdir dist
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o "dist/Wakeloom-$V.exe" .
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go -C app build -trimpath -ldflags "-s -w -H windowsgui" -o "../dist/Wakeloom-$V.exe" .
           sha=$(sha256sum "dist/Wakeloom-$V.exe" | cut -d' ' -f1)
           size=$(stat -c%s "dist/Wakeloom-$V.exe")
           sed -n "/^## v$V/,/^## /p" CHANGELOG.md | sed '1d' | sed '/^## /d' | sed '/^$/d' > notes.txt
@@ -59,18 +60,24 @@ jobs:
           json.dump({"version": v, "url": f"https://github.com/{repo}/releases/download/v{v}/Wakeloom-{v}.exe",
                      "sha256": sha, "size": size, "notes": notes}, open("dist/latest.json", "w"), ensure_ascii=False)
           PY
-          cp gateway/gate-*.py dist/
-          cp gateway/enable-*-vision.py gateway/enable-vision-on-vps.py dist/
+          cp app/gateway/gate-*.py dist/
+          cp app/gateway/enable-*-vision.py app/gateway/enable-vision-on-vps.py dist/
           python3 - "$V" <<'PY'
           from pathlib import Path
           import sys, zipfile
-          files = sorted(Path("gateway").glob("gate-*.py"))
-          files += [Path("gateway/enable-qwen-vision.py"), Path("gateway/enable-vision-on-vps.py"), Path("gateway/README.md")]
+          files = sorted(Path("app/gateway").glob("gate-*.py"))
+          files += [Path("app/gateway/enable-qwen-vision.py"), Path("app/gateway/enable-vision-on-vps.py"), Path("app/gateway/README.md")]
           with zipfile.ZipFile(f"dist/Wakeloom-{sys.argv[1]}-gateway.zip", "w", zipfile.ZIP_DEFLATED) as z:
               for path in files:
                   z.write(path, path.name)
           PY
           cat dist/latest.json
+      - name: Build Linux packages
+        run: python3 scripts/build-linux.py
+      - name: Linux startup check
+        run: |
+          v=$(sed -n 's/^const AppVersion = "\(.*\)"/\1/p' app/update.go)
+          python3 scripts/smoke-linux.py "dist/Wakeloom-$v-linux-amd64"
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}

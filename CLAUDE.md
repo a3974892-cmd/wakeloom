@@ -1,17 +1,23 @@
 # CLAUDE.md — Wakeloom（唤织）维护说明
 
 Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，AI 页用 Ollama 跑 GGUF 大模型对话 + SDXL/Chroma 生图，空闲自动停机。
-单文件 exe（Go + WebView2），界面、启动套件全部 `go:embed` 进 exe。
+Windows 为单文件 exe（Go + WebView2）；Linux 为无 cgo 的单文件程序，在默认浏览器打开界面。界面、启动套件全部 `go:embed`。
+
+Linux：`python3 scripts/build-linux.py` 生成 amd64/arm64 静态程序、便携 tar.gz 与分架构清单；本地测试可加 `--label=-test1 --out <目录>`（不生成正式更新清单）。`scripts/smoke-linux.py <本机架构程序>` 使用临时数据目录验证 HTTP、重复启动与退出后重开。Linux 使用 XDG_CONFIG_HOME 或 ~/.config、内核文件锁（含 headless）、独立 latest-linux-<arch>.json，不能回退到 Windows 更新清单。Linux 平台测试需要在 Linux 执行，交叉编译通过不等于运行验收。
 
 **合规：** 不要把 MiniMax 官方 H3 提示词指南（或其中的句子）放进仓库或 exe——其社区许可限制分发地区。提示词骨架、片段、内置说明都要用自己的措辞，只保留模型要求的字段名（如 `integrated_multimodal_description`、`<Picture 1>`、`[Shot 1]`）。
 
 ## 目录结构
+
+源码已集中到 `app/`。下表代码路径相对 `app/`；`docs/`、`scripts/`、`.github/` 和 `CHANGELOG.md` 相对仓库根目录。构建及套件维护命令先 `cd app`，发布脚本从仓库根目录运行。
 
 | 路径 | 内容 |
 |---|---|
 | `*.go`（module `ckwb`，package main） | 桌面程序：本地 HTTP 服务 + WebView2 窗口 |
 | `main.go` | 入口：单实例、数据目录、配置、本地网关、任务 worker、本地 HTTP 服务，再开窗口 |
 | `server.go` | 本地 HTTP API，`//go:embed ui` |
+| `diagnostics.go` / `ui/diagnostics.js` | 本机诊断日志与预览/复制/导出；写盘前脱敏，不记录请求正文或配置。约 6 MB 轮换，最近 3000 条展示；网关日志仅在软件连接期间收集。测试版本用链接参数 `-X main.BuildLabel=...` 标识报告 |
+| `ui/refinement.css` / `ui/brand.svg` | 界面排版、图标导航、浅深色与窄窗口适配；原创 W 标志。exe 图标由 `winres/icon.png` 生成，修改后须更新 Windows 资源 |
 | `gate.go` / `proxy*.go` | 网关模式：连接用户 VPS 上的 comfy-colab-kit 网关 |
 | `localgate.go`（`//go:embed kit`）、`colab.go`、`colab_auth.go`、`libstore.go`、`local_api.go` | 本地模式（实验）：程序自己当网关，用 Google 账号直接开关 Colab（非公开接口） |
 | `jobs.go`、`templates.go`、`labels.go` | 任务队列、ComfyUI API 工作流模板、参数中文名/推荐值 |
@@ -29,7 +35,7 @@ Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，
 | `docs/GETTING_STARTED.md` | 新手指南（与引导步骤对应；截图占位在 `docs/img/`） |
 | `testdata/plans/` | 内置启动配置在「core 模型」改动前生成的计划快照，`TestBuiltinPlansUnchanged` 对比 |
 | `update.go` | 自动更新：读 GitHub Releases 的 `latest.json`，校验 SHA-256 后替换；`AppVersion` 在这里 |
-| `*_windows.go` / `*_other.go` | 平台相关（窗口、单实例、系统代理）；非 Windows 版本只是桩，便于 Linux 上测试 |
+| `*_windows.go` / `*_linux.go` / `*_other.go` | 平台相关（窗口、单实例、系统代理）；Linux 使用浏览器工作台和文件锁 |
 | `rsrc_windows_amd64.syso`、`winres/` | 图标/版本资源（go-winres 生成） |
 | `ui/` | 内嵌界面：`index.html`、`app.js`、`ai.js`、`style.css` |
 | `kit/` | 上传到 Colab 的启动套件（来自 FireTable/comfy-colab-kit，MIT）：`colab/setup.py`（VM 上的启动脚本）、`gate/`（配置/计划解析）、`profiles/`（内置启动配置）、`driver.py`、`wbproxy.py` |
@@ -40,6 +46,7 @@ Windows 桌面程序：按需唤醒 Colab GPU 跑 ComfyUI 生成视频/图片，
 ## 构建 / 测试
 
 ```bash
+cd app
 go test ./...
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o Wakeloom.exe .
 ```
@@ -51,6 +58,8 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H wi
 - 图标/版本资源改动后：`go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64 --out rsrc`
 
 ## 修改 kit / 网关补丁（重要）
+
+本地 test8 起，生成器通过 `edits.py` 的 `LOCAL_SETUP` 为内嵌 kit 启用与 `gate-bootstrap.py` 同源的引导重试；VPS 完整补丁仍使用原 `SETUP`，可另行应用独立引导补丁。不要因升级桌面套件而改动现有生产网关。
 
 `kit/colab/setup.py`、`kit/gate/profiles.py`、`kit/gate/plan.py` 中 AI 相关部分（`# ── wb-ai` 区块、`ai_prepare`/`ai_finish`、`wb-boot` 等）由 `gateway/src/edits.py` 生成，**两边必须保持一致**：
 
@@ -67,10 +76,10 @@ kit 的日志输出用英文；程序界面和更新日志用中文。
 
 ## 发版流程
 
-1. 改 `update.go` 的 `const AppVersion = "X.Y.Z"`。
+1. 改 `app/update.go` 的 `const AppVersion = "X.Y.Z"`。
 2. 在 `CHANGELOG.md` 顶部（`# 更新日志` 下）加 `## vX.Y.Z` 和若干 `- ` 条目（会成为 Release 说明和 `latest.json` 的 notes）。
 3. `go test ./...`，提交并推送到 `main`。
-4. 主分支上修改 `update.go` 会自动触发 release；也可推标签 `git tag vX.Y.Z && git push origin vX.Y.Z`，或在 Actions 页手动运行 release，发布 `AppVersion` 对应的版本。同一版本只选一个触发方式，避免并行上传。
+4. 主分支上修改 `app/update.go` 会自动触发 release；也可推标签 `git tag vX.Y.Z && git push origin vX.Y.Z`，或在 Actions 页手动运行 release，发布 `AppVersion` 对应的版本。同一版本只选一个触发方式，避免并行上传。
 5. 工作流会：校验标签与 `AppVersion` 一致（不一致直接失败）→ 测试 → 构建 `Wakeloom-X.Y.Z.exe` → 生成 `latest.json` → 连同 `gateway/gate-*.py` 发布到 GitHub Release。程序的自动更新读 `releases/latest/download/latest.json`。
 
 ## 注意事项

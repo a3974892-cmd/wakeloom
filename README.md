@@ -31,6 +31,8 @@ A Windows desktop workbench that wakes a Colab GPU on demand and turns it into a
 
 ## 下载
 
+Linux 测试版已加入源码，提供 amd64 / arm64 单文件与便携包，浏览器打开同一工作台；使用方法、数据目录及验证范围见 [Linux 说明](docs/LINUX.md)。正式 Linux Release 尚未发布。
+
 到 [Releases](../../releases/latest) 下载最新的 `Wakeloom-x.y.z.exe`，双击运行即可（单文件，无需安装；需要 Windows 10/11 自带的 WebView2）。
 
 > 安装包没有代码签名，首次运行 Windows 可能提示「Windows 已保护你的电脑」（SmartScreen）：点 **更多信息**，再点 **仍要运行**。
@@ -47,7 +49,7 @@ A Windows desktop workbench that wakes a Colab GPU on demand and turns it into a
 | 服务器 | 一台 VPS 部署 comfy-colab-kit 网关 | 不需要 |
 | 配置 | 网关地址 + 令牌（可选 Cloudflare Access 服务令牌） | 软件内登录 Google |
 
-网关模式的增强功能（选择 GPU、插件/模型库、AI 页）需要给网关打补丁，见 [gateway/](gateway/README.md)。
+网关模式的增强功能（选择 GPU、插件/模型库、AI 页）需要给网关打补丁，见 [gateway/](app/gateway/README.md)。
 
 ### ⚠️ 本地模式说明
 
@@ -73,22 +75,25 @@ AI 页的模型来自第三方，使用时请遵守各自的许可证：
 需要 Go 1.24+（可在 Linux / macOS 上交叉编译）：
 
 ```bash
+cd app
 go test ./...
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o Wakeloom.exe .
 ```
 
 图标 / 版本资源改动后重新生成：`go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64 --out rsrc`
 
-发版：修改 `update.go` 的 `AppVersion`、在 `CHANGELOG.md` 顶部写 `## vX.Y.Z`，推送标签 `vX.Y.Z`，或在 Actions 页面手动运行 **release** 工作流，GitHub Actions 会自动测试、构建并发布 exe 和 `latest.json`。
+发版：修改 `app/update.go` 的 `AppVersion`、在 `CHANGELOG.md` 顶部写 `## vX.Y.Z`，推送 main 后自动发布（也可选择推送标签 `vX.Y.Z`，或在 Actions 页面手动运行 **release** 工作流，三种方式只选一种），GitHub Actions 会自动测试、构建并发布 exe 和 `latest.json`。
 
 ## 目录
 
 ```
-*.go            桌面程序（本地 HTTP 服务 + WebView2 窗口）
-ui/             界面（HTML / CSS / JS，编译进 exe）
-kit/            上传到 Colab 的启动套件（来自 comfy-colab-kit，MIT）与内置启动配置
-gateway/        给 comfy-colab-kit 网关打的一键补丁及其源码
-docs/           新手指南（截图位置待补：docs/img/）
+app/            程序源码、测试和依赖
+  ui/           内嵌界面和图标
+  kit/          Colab 启动套件与模型配置
+  gateway/      网关补丁及其源码
+docs/           使用指南和维护记录
+scripts/        构建与检查工具
+.github/        自动测试和发布流程
 ```
 
 ## 致谢
@@ -104,11 +109,11 @@ docs/           新手指南（截图位置待补：docs/img/）
 
 **Wakeloom** is a single-file Windows app that wakes a Google Colab GPU when you need it, runs ComfyUI workflows (video, image) and local LLM chat on it, downloads the results, and shuts the GPU down when idle.
 
-- Gateway mode talks to your own [comfy-colab-kit](https://github.com/FireTable/comfy-colab-kit) gateway (apply the patches in `gateway/` for GPU selection, the add-on library and the AI page).
+- Gateway mode talks to your own [comfy-colab-kit](https://github.com/FireTable/comfy-colab-kit) gateway (apply the patches in `app/gateway/` for GPU selection, the add-on library and the AI page).
 - Local mode (experimental) drives Colab directly with your Google account. It relies on non-public Colab endpoints and the public Google Cloud SDK OAuth client — use at your own risk.
 - AI page: Qwen3.8 27B (GGUF via Ollama), RealVisXL V5.0, Chroma1-HD; add more with a profile.
 - Releases are built by GitHub Actions; the app auto-updates from them (SHA-256 verified).
 
-Build: `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o Wakeloom.exe .`
+Build: `cd app` first, then `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o Wakeloom.exe .`
 
-MIT License. `kit/` is derived from comfy-colab-kit (MIT, © FireTable). Not affiliated with Google or Comfy Org.
+MIT License. `app/kit/` is derived from comfy-colab-kit (MIT, © FireTable). Not affiliated with Google or Comfy Org.

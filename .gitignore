@@ -1,4 +1,6 @@
 *.exe
 /dist/
+/app/dist/
+*.bak
 __pycache__/
 *.pyc
