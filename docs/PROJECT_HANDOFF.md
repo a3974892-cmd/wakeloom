@@ -32,4 +32,4 @@ Wakeloom 是按需使用 Colab GPU 的桌面工作台，提供 ComfyUI 图片/�
 
 目录整理后的 Windows 全量 Go 测试通过；模型、导入、视觉和引导的 28 项 Python 检查通过。正式候选 exe 的隔离浏览器检查覆盖浅深色/窄窗口、日志复制/导出/持久化、旧对话迁移、长代码、附件、技能和工作流匹配，均通过。这些检查不启动真实 GPU。
 
-发布流程从 `app/update.go` 读取版本，构建 Windows exe、Linux 包和各自的更新清单。发布后核对标签源码、Release 附件、实际下载的大小与 SHA-256、`releases/latest` 指向，再记录完成状态。不得把未验证的真实 Colab 启动或视觉推理描述成已验收。
+发布流程从 `app/update.go` 读取版本，目前仅发布 Windows exe、网关附件和 Windows 更新清单。用户要求 Linux 等实机测试后再发布；Linux 源码和独立检查保留，不自动发布包或清单。发布后核对标签源码、Release 附件、实际下载的大小与 SHA-256、`releases/latest` 指向，再记录完成状态。不得把未验证的真实 Colab 启动或视觉推理描述成已验收。

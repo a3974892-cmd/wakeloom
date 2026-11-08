@@ -1,0 +1,47 @@
+name: Hold untested Linux release
+on:
+  push:
+    branches: ["main"]
+    paths: [".github/workflows/hold-linux-release.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  withdraw-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Withdraw only v1.21.4 Linux downloads pending user testing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          repo = os.environ['GITHUB_REPOSITORY']
+          release = json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/v1.21.4']))
+          names = {'latest-linux-amd64.json', 'latest-linux-arm64.json', 'SHA256SUMS-linux.txt',
+                   'Wakeloom-1.21.4-linux-amd64', 'Wakeloom-1.21.4-linux-amd64.tar.gz',
+                   'Wakeloom-1.21.4-linux-arm64', 'Wakeloom-1.21.4-linux-arm64.tar.gz'}
+          for asset in release['assets']:
+              if asset['name'] in names:
+                  subprocess.run(['gh','api','--method','DELETE',f"repos/{repo}/releases/assets/{asset['id']}"],check=True)
+                  print('Withdrawn:',asset['name'])
+          remaining = json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/v1.21.4']))
+          assert not names.intersection(a['name'] for a in remaining['assets'])
+          assert {'latest.json','Wakeloom-1.21.4.exe'}.issubset(a['name'] for a in remaining['assets'])
+          PY
+          sed -n '/^## v1.21.4/,/^## /p' CHANGELOG.md | sed '1d' | sed '/^## /d' > notes.md
+          gh release edit v1.21.4 --notes-file notes.md
+          mkdir -p "$RUNNER_TEMP/windows-manifest"
+          gh release download v1.21.4 --pattern latest.json --dir "$RUNNER_TEMP/windows-manifest"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'windows-manifest/latest.json'
+          manifest = json.loads(path.read_text())
+          assert manifest['version'] == '1.21.4'
+          notes = Path('notes.md').read_text()
+          manifest['notes'] = ' '.join(line.lstrip('- ').strip() for line in notes.splitlines() if line.startswith('- '))
+          path.write_text(json.dumps(manifest,ensure_ascii=False),encoding='utf-8')
+          PY
+          gh release upload v1.21.4 "$RUNNER_TEMP/windows-manifest/latest.json" --clobber

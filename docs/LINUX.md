@@ -2,7 +2,7 @@
 
 Linux 版与 Windows 版共用工作台、模型配置、任务队列、附件、技能、本地直连和 VPS 网关功能。界面在默认浏览器打开；云端仍负责运行模型，本机无需安装 CUDA、Python、Ollama 或 WebView2。
 
-自 1.21.4 提供实验性 Linux 构建。真实 Linux 桌面、Google 登录和 Colab 唤醒需实机验收。
+Linux 源码和本地测试构建暂不发布下载或自动更新清单，等待用户实机测试。CI 检查不代表真实 Linux 桌面、Google 登录和 Colab 唤醒已验收。下面的启动说明供本地测试使用。
 
 ## 启动
 

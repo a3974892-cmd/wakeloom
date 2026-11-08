@@ -72,12 +72,6 @@ jobs:
                   z.write(path, path.name)
           PY
           cat dist/latest.json
-      - name: Build Linux packages
-        run: python3 scripts/build-linux.py
-      - name: Linux startup check
-        run: |
-          v=$(sed -n 's/^const AppVersion = "\(.*\)"/\1/p' app/update.go)
-          python3 scripts/smoke-linux.py "dist/Wakeloom-$v-linux-amd64"
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
