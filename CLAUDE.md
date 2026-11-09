@@ -40,6 +40,7 @@ Linux：`python3 scripts/build-linux.py` 生成 amd64/arm64 静态程序、便�
 | `docs/GETTING_STARTED.md` | 新手指南（与引导步骤对应；截图占位在 `docs/img/`） |
 | `testdata/plans/` | 内置启动配置在「core 模型」改动前生成的计划快照，`TestBuiltinPlansUnchanged` 对比 |
 | `update.go` | 自动更新：读 GitHub Releases 的 `latest.json`，校验 SHA-256 后替换；`AppVersion` 在这里 |
+| `desktop_icon_windows.go` / `winres/refresh-shortcuts.ps1` | 正常启动后迁移当前 EXE 的桌面快捷方式图标并通知 Shell 刷新；保留参数/其他安装副本，headless 不触碰桌面，Windows 原生隔离测试 |
 | `*_windows.go` / `*_linux.go` / `*_other.go` | 平台相关（窗口、单实例、系统代理）；Linux 使用浏览器工作台和文件锁 |
 | `rsrc_windows_amd64.syso`、`winres/` | 图标/版本资源（go-winres 生成） |
 | `ui/` | 内嵌界面：`index.html`、`app.js`、`ai.js`、`style.css` |

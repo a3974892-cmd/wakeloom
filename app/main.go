@@ -20,6 +20,7 @@ func main() {
 	loadConfig()
 	loadGoogleToken()
 	initDiagnostics()
+	go refreshDesktopIcon()
 	defer func() {
 		if p := recover(); p != nil {
 			diagEvent("error", "app", fmt.Sprintf("panic: %v", p))

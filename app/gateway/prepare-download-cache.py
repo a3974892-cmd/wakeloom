@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -170,7 +171,10 @@ def patch_source(source):
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
         if len(nodes) != 1:
             raise RuntimeError("Install bootstrap test6 and the Ollama download patch first")
-        signature = ast.dump(nodes[0], include_attributes=False).replace(", type_params=[]", "")
+        # Python 3.13+ can omit empty fields; fingerprints use the complete
+        # pre-3.13 form. Keep the same whitelist and reject changed code.
+        options = {"show_empty": True} if sys.version_info >= (3, 13) else {}
+        signature = ast.dump(nodes[0], include_attributes=False, **options).replace(", type_params=[]", "")
         if hashlib.sha256(signature.encode()).hexdigest() != expected:
             raise RuntimeError("Unrecognized download function; nothing changed")
     mains = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]

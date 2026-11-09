@@ -23,6 +23,7 @@ import (
 	"time"
 )
 
+// AppVersion is the published update version; BuildLabel identifies local tests.
 const AppVersion = "1.21.5"
 const defaultUpdateURL = "https://github.com/a3974892-cmd/wakeloom/releases/latest/download/latest.json"
 
