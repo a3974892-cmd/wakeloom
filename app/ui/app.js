@@ -861,9 +861,9 @@ function preview(path, kind) {
   openModal(`${media}<div class="row between gap"><span class="muted small">${esc(name)}</span><span class="row gap"><button class="btn sm" id="pvReveal">在文件夹中显示</button><button class="btn sm" data-close>关闭</button></span></div>`);
   $("#pvReveal").onclick = () => api("/api/open", { json: { path } });
 }
-function openModal(html) { $("#modalBox").innerHTML = html; $("#modal").hidden = false; $$("[data-close]").forEach(b => b.onclick = closeModal); }
+function openModal(html, {dismissOnBackdrop = true} = {}) { $("#modalBox").innerHTML = html; $("#modal").dataset.dismissOnBackdrop = String(dismissOnBackdrop); $("#modal").hidden = false; $$("[data-close]").forEach(b => b.onclick = closeModal); }
 function closeModal() { $("#modal").hidden = true; $("#modalBox").innerHTML = ""; }
-$("#modal").onclick = e => { if (e.target.id === "modal") closeModal(); };
+$("#modal").onclick = e => { if (e.target.id === "modal" && $("#modal").dataset.dismissOnBackdrop !== "false") closeModal(); };
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 
 // ---------------- library (on-demand nodes / models) ----------------

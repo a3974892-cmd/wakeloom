@@ -46,9 +46,18 @@ def _parse_ai(raw, models: dict, pid: str) -> dict | None:
             temp = float(llm.get("temperature", 0.7))
         except (TypeError, ValueError):
             raise ProfileError(f"{ctx}.llm: ctx must be an integer and temperature a number") from None
+        engine = str(llm.get("engine") or "")
+        if engine not in ("", "llama_cpp_1m"):
+            raise ProfileError(f"{ctx}.llm.engine is not supported")
+        if engine == "llama_cpp_1m":
+            if int(llm.get("ctx", 0)) != 1000000 or llm.get("projector") or "Qwen3.8-27B" not in models[mid].dest:
+                raise ProfileError(f"{ctx}.llm: 1M requires Qwen3.8-27B text GGUF, ctx=1000000, no projector")
+            ctxlen = 1000000
         out["llm"] = {"model": mid, "dest": models[mid].dest, "name": name, "ctx": ctxlen,
                       "think": bool(llm.get("think", True)), "temperature": temp,
                       "system": str(llm.get("system") or "")[:4000]}
+        if engine:
+            out["llm"]["engine"] = engine
         uses = [mid]
         projector = str(llm.get("projector") or "")
         if projector:
@@ -271,7 +280,8 @@ async def _wb_info(request):
     up = False
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as s:
-            async with s.get(OLLAMA + "/api/version") as r:
+            endpoint = LLAMA + "/health" if (info.get("llm") or {}).get("engine") == "llama_cpp_1m" else OLLAMA + "/api/version"
+            async with s.get(endpoint) as r:
                 up = r.status == 200
     except Exception:
         pass
@@ -281,6 +291,9 @@ async def _wb_info(request):
 @_routes.route("*", "/wbllm/{tail:.*}")
 async def _wb_proxy(request):
     tail = request.match_info["tail"]
+    if (_long_info().get("llm") or {}).get("engine") == "llama_cpp_1m":
+        request._client_max_size = 32 << 20
+        return await _wb_long_proxy(request, tail)
     if tail not in ALLOWED:
         return web.json_response({"error": "not allowed"}, status=404)
     body = await request.read()
@@ -303,9 +316,78 @@ async def _wb_proxy(request):
 """
 
 
+_WB_OLLAMA_MODELS = "/content/ollama_models"
+
+
+def _ollama_prepare_storage():
+    """Keep the original disk path unless importing would exhaust it. Called before serve.
+    A RAM source plus a disk blob plus compat-migrate can otherwise require three copies.
+    Only enlarge our existing tmpfs, leaving explicit headroom for the runtime."""
+    global _WB_OLLAMA_MODELS
+    total = sum(int((m.get("size_gb") or 0) * 1e9) for m in PLAN.get("models", []))
+    if total <= 0:
+        return
+    disk = "/content/ollama_models"
+    os.makedirs(disk, exist_ok=True)
+    budget = int(total * 2.2) + 4_000_000_000
+    disk_needed = int(total * 1.1) + 2_000_000_000  # source will be linked, only rewrite needs disk
+    free = shutil.disk_usage(disk).free
+    print(f"KIT_OLLAMA_STORAGE disk_free={free / 1e9:.1f}GB linked_import_budget={disk_needed / 1e9:.1f}GB", flush=True)
+    if free >= disk_needed:
+        print("KIT_OLLAMA_STORAGE keeping disk with verified source-link reuse; copy fallback requires a separate capacity check", flush=True)
+        return
+    root = globals().get("STORE_ROOT")
+    # Do not turn a disk profile into a RAM profile, alter another mount, or move existing models.
+    if root != "/mnt/ram" or not os.path.ismount(root):
+        print(f"KIT_OLLAMA_STORAGE keeping disk; model_store={root!r}; no active managed RAM mount", flush=True)
+        return
+    if os.listdir(disk):
+        print("KIT_OLLAMA_STORAGE existing model store retained", flush=True)
+        return
+    # Account for RAM already occupied by this tmpfs while downloads overlap installation.
+    available = mem_available()
+    usage = shutil.disk_usage(root)
+    required = max(0, budget - (usage.total - usage.free)) + 24_000_000_000
+    if available < required:
+        print(f"KIT_OLLAMA_STORAGE RAM reserve insufficient: {available / 1e9:.1f}GB < {required / 1e9:.1f}GB; keeping disk", flush=True)
+        return
+    size_mb = (budget + (1 << 20) - 1) // (1 << 20)
+    current = usage.total
+    size_mb = max(size_mb, (current + (1 << 20) - 1) // (1 << 20))
+    try:
+        rc = subprocess.run(["mount", "-o", f"remount,size={size_mb}M", root],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        print("KIT_OLLAMA_STORAGE tmpfs resize unavailable; keeping disk", flush=True)
+        return
+    if rc.returncode:
+        print("KIT_OLLAMA_STORAGE tmpfs resize failed; keeping disk", flush=True)
+        return
+    candidate = os.path.join(root, "ollama_models")
+    os.makedirs(candidate, exist_ok=True)
+    if os.stat(candidate).st_dev != os.stat(os.path.join(root, "models")).st_dev:
+        raise RuntimeError("Ollama RAM store is not on the model filesystem")
+    _WB_OLLAMA_MODELS = candidate
+    print(f"KIT_OLLAMA_STORAGE RAM selected; capacity={size_mb / 1024:.1f}GiB; source hard-link reuse and compatibility rewrite reserve", flush=True)
+
+
+def _ollama_check_import_space(path, reused):
+    """Reserve another full GGUF for Ollama's compatibility metadata rewrite."""
+    blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
+    os.makedirs(blobs, exist_ok=True)
+    size = os.path.getsize(path)
+    needed = int(size * (1.1 if reused else 2.1)) + 2_000_000_000
+    free = shutil.disk_usage(blobs).free
+    print(f"KIT_OLLAMA_STORAGE before_import free={free / 1e9:.1f}GB required={needed / 1e9:.1f}GB reused={reused}", flush=True)
+    if free < needed:
+        raise RuntimeError(f"Ollama import storage insufficient: {free / 1e9:.1f} GB free, {needed / 1e9:.1f} GB required including compatibility conversion. Use a VM with more disk/RAM or a smaller quantization; import was not started.")
+    if _ollama_env()["OLLAMA_MODELS"].startswith("/mnt/ram/") and mem_available() < needed + 24_000_000_000:
+        raise RuntimeError("Ollama import RAM reserve insufficient; import was not started. Use a VM with more RAM or a smaller quantization.")
+
+
 def _ollama_env():
     llm = (PLAN.get("ai") or {}).get("llm") or {}
-    env = {**os.environ, "OLLAMA_HOST": "127.0.0.1:11434", "OLLAMA_MODELS": "/content/ollama_models",
+    env = {**os.environ, "OLLAMA_HOST": "127.0.0.1:11434", "OLLAMA_MODELS": _WB_OLLAMA_MODELS,
            "OLLAMA_KEEP_ALIVE": "-1", "OLLAMA_CONTEXT_LENGTH": str(llm.get("ctx", 32768)),
            "OLLAMA_FLASH_ATTENTION": "1", "OLLAMA_NUM_PARALLEL": "1"}
     for k in ("HF_TOKEN", "CF_TUNNEL_TOKEN"):
@@ -351,8 +433,12 @@ def ai_prepare():
 
     def run():
         try:
+            if (ai.get("llm") or {}).get("engine") == "llama_cpp_1m":
+                llama_install()
+                return
             if not _ollama_bin():
                 ollama_install()
+            _ollama_prepare_storage()
             ollama_serve()
         except Exception as e:  # noqa: BLE001
             box["error"] = e
@@ -374,19 +460,24 @@ def _dir_bytes(d):
 
 
 def _ollama_seed_blob(path, every=10):
-    """Reuse the completed GGUF on the same filesystem instead of copying it into Ollama.
+    """Reuse the completed GGUF instead of copying it into Ollama.
     The normal CLI still hashes the source, registers the model and chooses its original defaults.
+    Across filesystems, a verified symlink keeps the completed VM model in its original store.
+    The source must remain for the VM lifetime; never move/delete it after registration.
     If linking is unavailable, leave both files untouched and use the original import path."""
     import hashlib
+    import errno
 
     blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
     linked = None
     try:
         os.makedirs(blobs, exist_ok=True)
+        path = os.path.realpath(path)
         source = os.stat(path)
-        if source.st_size <= 0 or source.st_dev != os.stat(blobs).st_dev:
-            print("  blob reuse unavailable across filesystems; using standard import", flush=True)
+        if source.st_size <= 0:
             return False
+        cross_fs = source.st_dev != os.stat(blobs).st_dev
+        print(f"KIT_OLLAMA_STORAGE source_device={source.st_dev} blob_device={os.stat(blobs).st_dev} cross_filesystem={cross_fs}", flush=True)
 
         def identity(st):
             return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
@@ -410,12 +501,24 @@ def _ollama_seed_blob(path, every=10):
         blob = os.path.join(blobs, "sha256-" + digest.hexdigest())
         if os.path.lexists(blob):
             return False  # never replace a pre-existing blob or link
-        os.link(path, blob)
+        link_kind = "hardlink"
+        if cross_fs:
+            os.symlink(path, blob)
+            link_kind = "symlink"
+        else:
+            try:
+                os.link(path, blob)
+            except OSError as link_error:
+                if link_error.errno != errno.EXDEV:
+                    raise
+                # Bind/overlay mounts can report equal device IDs yet reject a hard link.
+                os.symlink(path, blob)
+                link_kind = "symlink"
         linked = blob
         if identity(os.stat(blob)) != identity(source):
             os.unlink(blob)
             return False
-        print(f"  reusing {source.st_size / 1e9:.1f} GB model without an extra copy", flush=True)
+        print(f"  reusing {source.st_size / 1e9:.1f} GB model without an extra copy ({link_kind}); source retained", flush=True)
         return True
     except OSError as e:
         if linked:
@@ -436,6 +539,7 @@ def _ollama_create(name, mf, path, every=10):
     print(f"registering {os.path.basename(path)} ({size / 1e9:.1f} GB) with Ollama as {name} …", flush=True)
     t0 = time.time()
     reused = _ollama_seed_blob(path, every)
+    _ollama_check_import_space(path, reused)
     base = _dir_bytes(blobs)
     p = subprocess.Popen([_ollama_bin() or "ollama", "create", name, "-f", mf], env=_ollama_env(),
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -467,9 +571,8 @@ def _ollama_create(name, mf, path, every=10):
             break
         except subprocess.TimeoutExpired:
             done = max(0, _dir_bytes(blobs) - base)
-            pct = f" ({min(100, done * 100 // size)}%)" if size else ""
             msg = (f"  … {int(time.time() - t0)}s, reusing model file; preparing Ollama metadata" if reused else
-                   f"  … {int(time.time() - t0)}s, written {done / 1e9:.1f}/{size / 1e9:.1f} GB{pct}")
+                   f"  … {int(time.time() - t0)}s, import writes {done / 1e9:.1f} GB (source {size / 1e9:.1f} GB; includes compatibility conversion)")
             if state["last"]:
                 msg += f" · {state['last'][:100]}"
             print(msg, flush=True)
@@ -520,9 +623,12 @@ def ai_finish(prep):
     with Stage("llm"):
         t.join(900)
         if t.is_alive():
-            raise RuntimeError("Ollama install timed out")
+            raise RuntimeError("1M runtime install timed out" if llm.get("engine") == "llama_cpp_1m" else "Ollama install timed out")
         if box.get("error"):
             raise box["error"]
+        if llm.get("engine") == "llama_cpp_1m":
+            llama_finish(llm)
+            return
         path = os.path.realpath(f"{COMFY}/models/{llm['dest']}")
         if not os.path.isfile(path):
             raise RuntimeError(f"LLM model file missing: {llm['dest']}")
@@ -564,6 +670,9 @@ def install_custom_nodes():'''
 
 from ollama_installer import INSTALL_SOURCE
 AI_SETUP = AI_SETUP.replace("__WB_OLLAMA_INSTALL__", INSTALL_SOURCE)
+from long_context import RUNTIME_SOURCE, NODE_SOURCE
+AI_SETUP = AI_SETUP.replace("\ndef _ollama_env():", "\n" + RUNTIME_SOURCE + "\ndef _ollama_env():")
+AI_SETUP = AI_SETUP.replace("\n_routes = PromptServer.instance.routes", "\n" + NODE_SOURCE + "\n_routes = PromptServer.instance.routes")
 
 BOOT_OLD = """        if not os.path.isdir(COMFY):
             procs.append(subprocess.Popen(
@@ -822,7 +931,7 @@ SETUP = [
     ('    if not any(t.name == "kit_watchdog" for t in threading.enumerate()):\n',
      '    ai_finish(ai_prep)\n    if not any(t.name == "kit_watchdog" for t in threading.enumerate()):\n'),
     ('        if time.time() - t0 > max_s:\n',
-     '        if (PLAN.get("ai") or {}).get("type") == "llm" and _ollama_bin() and not _ollama_up():\n'
+     '        if (PLAN.get("ai") or {}).get("type") == "llm" and ((PLAN.get("ai") or {}).get("llm") or {}).get("engine") != "llama_cpp_1m" and _ollama_bin() and not _ollama_up():\n'
      '            print("[watchdog] ollama died; restarting", flush=True)\n'
      '            try:\n                ollama_serve()\n            except Exception as e:  # noqa: BLE001\n'
      '                print(f"[watchdog] ollama restart failed: {e!r}", flush=True)\n'
@@ -1087,6 +1196,15 @@ ai:
     think: false
     temperature: 0.7
 """
+
+PROFILE_QWEN_1M = (PROFILE_QWEN
+    .replace("served by Ollama", "served by pinned llama.cpp")
+    .replace("id: qwen38-27b-chat", "id: qwen38-27b-1m")
+    .replace("Qwen3.8 27B abliterated · Q8_0 对话", "Qwen3.8 27B · 1M 长上下文（实验·纯文字）")
+    .replace("title: Qwen3.8 27B abliterated\n", "title: Qwen3.8 27B · 1M 实验\n")
+    .replace("name: qwen3.8-27b\n", "name: qwen3.8-27b-1m\n    engine: llama_cpp_1m\n")
+    .replace("ctx: 32768", "ctx: 1000000")
+    .replace("# Needs >= 40 GB VRAM: G4 / A100 / H100 (L4 and T4 are too small).", "# Experimental text-only llama.cpp + YaRN x4. Requires >=80 GB VRAM; full-window quality needs testing."))
 
 PROFILE_REALVIS = """\
 # RealVisXL V5.0 (SDXL, photorealism) for the workbench "AI" page text-to-image panel. ~7 GB, any GPU.

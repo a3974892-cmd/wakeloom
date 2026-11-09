@@ -22,13 +22,29 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def require_symlink(directory):
+    source = directory / "symlink-probe-source"
+    link = directory / "symlink-probe-link"
+    source.write_bytes(b"probe")
+    try:
+        os.symlink(str(source), str(link))
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            raise unittest.SkipTest("Windows token cannot create symlinks; Linux/native-link test required")
+        raise
+    finally:
+        if os.path.lexists(link):
+            link.unlink()
+        source.unlink()
+
+
 def load_functions(models, popen=None):
     source = (ROOT / "kit/colab/setup.py").read_text(encoding="utf-8")
-    names = {"_ollama_seed_blob", "_ollama_create", "_dir_bytes"}
+    names = {"_ollama_seed_blob", "_ollama_create", "_dir_bytes", "_ollama_check_import_space"}
     functions = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in names]
     if len(functions) != len(names):
         raise AssertionError("generated kit missing importer functions")
-    env = dict(os=os, time=time, re=re, threading=threading,
+    env = dict(os=os, time=time, re=re, threading=threading, shutil=shutil,
                subprocess=types.SimpleNamespace(Popen=popen or subprocess.Popen, TimeoutExpired=subprocess.TimeoutExpired,
                                                 PIPE=subprocess.PIPE, STDOUT=subprocess.STDOUT),
                _ollama_env=lambda: {**os.environ, "OLLAMA_MODELS": str(models)}, _ollama_bin=lambda: "test-ollama")
@@ -54,9 +70,11 @@ class OllamaImportTests(unittest.TestCase):
             self.assertTrue(os.path.samefile(model, blob))
 
     def test_cli_registration_and_copy_fallback(self):
-        for fallback in (False, True):
+        for fallback in (False, True, "cross_fs"):
             with self.subTest(fallback=fallback), tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
                 root = Path(temp)
+                if fallback == "cross_fs":
+                    require_symlink(root)
                 source = root / "model.gguf"
                 source.write_bytes(b"GGUF unchanged bytes" * 100)
                 original = source.read_bytes()
@@ -83,17 +101,21 @@ print("success", flush=True)
                     return subprocess.Popen([sys.executable, str(cli), *argv[1:]], **kwargs)
 
                 env = load_functions(root / "ollama", popen)
-                with patch.object(os, "link", side_effect=OSError(errno.EPERM, "hard links unavailable")) if fallback else contextlib.nullcontext():
+                link_error = errno.EXDEV if fallback == "cross_fs" else errno.EPERM
+                with patch.object(os, "link", side_effect=OSError(link_error, "hard links unavailable")) if fallback else contextlib.nullcontext():
                     env["_ollama_create"]("test-model", str(mf), str(source), every=1)
                 result = json.loads(record.read_text())
-                self.assertEqual(result["copied"], fallback)
-                self.assertEqual(result["linked"], not fallback)
+                self.assertEqual(result["copied"], fallback is True)
+                self.assertEqual(result["linked"], fallback is not True)
+                blob = root / "ollama/blobs" / ("sha256-" + hashlib.sha256(original).hexdigest())
+                self.assertEqual(blob.is_symlink(), fallback == "cross_fs")
                 self.assertEqual(source.read_bytes(), original)
                 self.assertEqual(mf.read_text(), f"FROM {source}\n")
 
-    def test_cross_filesystem_skips_extra_hash_and_import_failure_still_fails(self):
+    def test_cross_filesystem_verifies_symlink_and_import_failure_still_fails(self):
         with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
             root = Path(temp)
+            require_symlink(root)
             source = root / "model.gguf"
             source.write_bytes(b"GGUF test")
             models = root / "ollama"
@@ -106,14 +128,55 @@ print("success", flush=True)
                     return types.SimpleNamespace(st_dev=real_stat(source).st_dev + 1)
                 return real_stat(p, *args, **kwargs)
 
-            env["os"] = types.SimpleNamespace(path=os.path, makedirs=os.makedirs, stat=stat)
-            with patch("builtins.open", side_effect=AssertionError("must not hash across filesystems")):
-                self.assertFalse(env["_ollama_seed_blob"](str(source)))
+            env["os"] = types.SimpleNamespace(path=os.path, makedirs=os.makedirs, stat=stat,
+                fstat=os.fstat, symlink=os.symlink, unlink=os.unlink,
+                link=lambda *a: self.fail("cross-filesystem path must not attempt hard links"))
+            self.assertTrue(env["_ollama_seed_blob"](str(source)))
+            blob = models / "blobs" / ("sha256-" + hashlib.sha256(source.read_bytes()).hexdigest())
+            self.assertTrue(blob.is_symlink())
+            self.assertTrue(os.path.samefile(source, blob))
+            # A compatibility rewrite creates a separate file, leaving the source link intact.
+            converted = models / "blobs/compat-migrate-test.gguf"
+            converted.write_bytes(blob.read_bytes() + b" converted")
+            self.assertEqual(source.read_bytes(), b"GGUF test")
+            blob.unlink()
+            self.assertEqual(source.read_bytes(), b"GGUF test")
             cli = root / "fail.py"
             cli.write_text("import sys; print('unsupported model', flush=True); sys.exit(7)")
             env = load_functions(models, lambda argv, **kw: subprocess.Popen([sys.executable, str(cli)], **kw))
             with self.assertRaisesRegex(RuntimeError, r"ollama create failed \(7\)"):
                 env["_ollama_create"]("test", "not-used", str(source), every=1)
+
+    def test_cross_device_dispatch_with_link_standin(self):
+        # Exercises the EXDEV branch even on Windows without symlink privileges.
+        # The stand-in is a hard link; this does not claim a native symlink test.
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(temp)
+            source = root / "model.gguf"
+            source.write_bytes(b"GGUF immutable source")
+            env = load_functions(root / "ollama")
+            real_link, calls = os.link, []
+            def symlink_standin(src, dst):
+                calls.append((src, dst))
+                real_link(src, dst)
+            with patch.object(os, "link", side_effect=OSError(errno.EXDEV, "cross device")), \
+                 patch.object(os, "symlink", side_effect=symlink_standin):
+                self.assertTrue(env["_ollama_seed_blob"](str(source)))
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], os.path.realpath(source))
+            self.assertEqual(Path(calls[0][1]).read_bytes(), source.read_bytes())
+
+    def test_symlink_failure_preserves_source_and_falls_back(self):
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
+            source = Path(temp) / "model.gguf"
+            source.write_bytes(b"GGUF unchanged")
+            models = Path(temp) / "ollama"
+            env = load_functions(models)
+            with patch.object(os, "link", side_effect=OSError(errno.EXDEV, "cross device")), \
+                 patch.object(os, "symlink", side_effect=OSError(errno.EPERM, "symlinks unavailable")):
+                self.assertFalse(env["_ollama_seed_blob"](str(source)))
+            self.assertEqual(source.read_bytes(), b"GGUF unchanged")
+            self.assertEqual(list((models / "blobs").iterdir()), [])
 
     def test_preexisting_blob_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):

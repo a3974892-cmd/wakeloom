@@ -32,12 +32,13 @@ const aiFileLimit = 10 << 20
 const aiTextLimit = 16000
 
 type aiAttachmentPart struct {
-	Name    string `json:"name"`
-	Text    string `json:"text,omitempty"`
-	Image   string `json:"image,omitempty"` // JPEG base64; never a path supplied by the browser.
-	TextID  string `json:"text_id,omitempty"`
-	ImageID string `json:"image_id,omitempty"`
-	Chars   int    `json:"chars,omitempty"`
+	Name     string `json:"name"`
+	Text     string `json:"text,omitempty"`
+	Image    string `json:"image,omitempty"` // JPEG base64; never a path supplied by the browser.
+	TextID   string `json:"text_id,omitempty"`
+	ImageID  string `json:"image_id,omitempty"`
+	BinaryID string `json:"binary_id,omitempty"` // Original bytes stored locally; only static report is sent.
+	Chars    int    `json:"chars,omitempty"`
 }
 
 type aiAttachment struct {
@@ -45,6 +46,7 @@ type aiAttachment struct {
 	Name         string             `json:"name"`
 	Files        int                `json:"files"`
 	Images       int                `json:"images"`
+	BinaryFiles  int                `json:"binary_files,omitempty"`
 	ImageParts   []int              `json:"image_parts,omitempty"`
 	Chars        int                `json:"chars"`
 	Skipped      []string           `json:"skipped,omitempty"`

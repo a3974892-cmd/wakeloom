@@ -54,7 +54,7 @@ func TestAIContextLongHistoryAndManySkillsStillSendsFolder(t *testing.T) {
 			total += utf8.RuneCountInString(c)
 			all += c
 		}
-		if total > aiTextLimit || !strings.Contains(all, "FOLDER_EVIDENCE") || strings.Contains(all, "old long code") {
+		if total > aiTextLimit || !strings.Contains(all, "FOLDER_EVIDENCE") || !strings.Contains(all, "Earlier topic") || !strings.Contains(all, "Earlier message excerpt") {
 			t.Error("request not packed correctly", total)
 		}
 		fmt.Fprintln(w, `{"message":{"content":"sent"},"done":true}`)
@@ -92,7 +92,7 @@ func TestAIContextKeepsWholeRecentTurnsAndManualExcerpts(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if usage.HistoryOmitted != 2 || usage.HistoryUsed != 2 || len(skills) != 1 || len(skills[0].ExcerptedReferences) != 1 {
+	if usage.HistoryOmitted != 0 || usage.HistoryUsed != 4 || usage.HistoryExcerpted != 1 || len(skills) != 1 || len(skills[0].ExcerptedReferences) != 1 {
 		t.Fatal(usage, skills)
 	}
 	all := ""
@@ -105,5 +105,86 @@ func TestAIContextKeepsWholeRecentTurnsAndManualExcerpts(t *testing.T) {
 	_, _, e = aiExpandStoredAttachments(context.Background(), packed, 0)
 	if e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestAIContextLongReplyRetainsFailedSteps(t *testing.T) {
+	withTempConfig(t, Config{})
+	messages := []map[string]any{
+		{"role": "user", "content": "环境是 Windows，本地模式。"},
+		{"role": "assistant", "content": "请先尝试 A。"},
+		{"role": "user", "content": "A 已执行，仍然失败，错误是 CONNECTION_REFUSED。不要再让我原样做 A。"},
+		{"role": "assistant", "content": "改用 B 检查：\n" + strings.Repeat("很长的代码内容\n", 5000) + "\nB_DONE 请提供 B 的结果。"},
+		{"role": "user", "content": "B 也失败了，下一步呢？"},
+	}
+	before, _ := json.Marshal(messages)
+	packed, _, usage, err := aiPrepareChatContext(messages, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.HistoryUsed != 4 || usage.HistoryOmitted != 0 || usage.HistoryExcerpted != 1 {
+		t.Fatal(usage)
+	}
+	all, chars := "", 0
+	for _, m := range packed {
+		s, _ := m["content"].(string)
+		all += s
+		chars += utf8.RuneCountInString(s)
+	}
+	for _, want := range []string{"环境是 Windows", "CONNECTION_REFUSED", "改用 B 检查", "B_DONE", "do not recommend an unchanged action", "middle omitted"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if chars > aiTextLimit || strings.Count(all, "B 也失败了，下一步呢？") != 1 {
+		t.Fatal("overflow or duplicated current question", chars)
+	}
+	for i, role := range []string{"system", "user", "assistant", "user", "assistant", "user"} {
+		if packed[i]["role"] != role {
+			t.Fatal("role order changed", packed)
+		}
+	}
+	after, _ := json.Marshal(messages)
+	if !bytes.Equal(before, after) {
+		t.Fatal("persisted history modified")
+	}
+}
+
+func TestAIContextShortTurnsRemainVerbatim(t *testing.T) {
+	withTempConfig(t, Config{})
+	messages := []map[string]any{{"role": "user", "content": "运行 A"}, {"role": "assistant", "content": "A 的命令"}, {"role": "user", "content": "A 失败了"}}
+	packed, _, usage, err := aiPrepareChatContext(messages, nil, nil)
+	if err != nil || usage.HistoryUsed != 2 || usage.HistoryExcerpted != 0 || usage.HistoryOmitted != 0 {
+		t.Fatal(err, usage)
+	}
+	for i, m := range messages {
+		if packed[i+1]["content"] != m["content"] {
+			t.Fatal("short message changed")
+		}
+	}
+}
+
+func TestAIContextBudgetBoundaries(t *testing.T) {
+	withTempConfig(t, Config{})
+	for _, size := range []int{1, 1000, 8000, 15000, 20000} {
+		messages := []map[string]any{}
+		for i := 0; i < 20; i++ {
+			messages = append(messages, map[string]any{"role": "user", "content": strings.Repeat("问", size)}, map[string]any{"role": "assistant", "content": strings.Repeat("答", size*2)})
+		}
+		messages = append(messages, map[string]any{"role": "user", "content": "继续排查"})
+		packed, _, usage, err := aiPrepareChatContext(messages, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chars := 0
+		for _, m := range packed {
+			chars += utf8.RuneCountInString(m["content"].(string))
+		}
+		if chars > aiTextLimit || usage.HistoryUsed+usage.HistoryOmitted != 40 || usage.HistoryExcerpted > usage.HistoryUsed {
+			t.Fatal(size, chars, usage)
+		}
+		if packed[len(packed)-1]["content"] != "继续排查" {
+			t.Fatal("latest question lost")
+		}
 	}
 }

@@ -88,7 +88,7 @@ func TestAIAttachmentFolderArchiveAndDocuments(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	if a.Files != 4 || a.Name != "资料" || len(a.Skipped) != 1 || len(a.Parts) != 0 {
+	if a.Files != 5 || a.BinaryFiles != 1 || a.Name != "资料" || len(a.Skipped) != 0 || len(a.Parts) != 0 {
 		t.Fatalf("summary: %+v", a)
 	}
 	// The persisted content, not browser storage, must remain available on subsequent requests.
@@ -116,7 +116,6 @@ func TestAIAttachmentRejectsUnsafeOrUnreadableFiles(t *testing.T) {
 		want  string
 	}{
 		{"traversal", map[string][]byte{"bad.zip": aiTestZIP(t, map[string][]byte{"../escape.txt": []byte("bad")})}, "路径无效"},
-		{"binary", map[string][]byte{"only.exe": {1, 2, 3}}, "没有可读取"},
 		{"bad pdf", map[string][]byte{"bad.pdf": []byte("not pdf")}, "PDF"},
 		{"invalid encoding", map[string][]byte{"bad.txt": {255, 1, 0, 4}}, "UTF-8"},
 	} {

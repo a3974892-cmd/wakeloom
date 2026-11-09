@@ -24,7 +24,7 @@ def main():
     if not (ROOT / "apps/gate/session.py").is_file():
         sys.exit(f"✗ {ROOT} is not the comfy-colab-kit folder – run: python3 gate-library.py /opt/comfy-colab-kit")
     if "def hf_to_https" not in (ROOT / "apps/gate/profiles.py").read_text():
-        sys.exit("✗ this gate version has no hf_to_https – send this output to Claude. Nothing was changed.")
+        sys.exit("✗ this gate version has no hf_to_https – send this output to the Wakeloom maintainer. Nothing was changed.")
     todo = []
     for rel, edits, mark in FILES:
         p = ROOT / rel
@@ -36,7 +36,7 @@ def main():
         for old, new in edits:
             n = out.count(old)
             if n != 1:
-                sys.exit(f"✗ {rel}: expected 1 match, found {n}:\n    {old.strip()[:90]}\nNothing was changed. Send this output to Claude.")
+                sys.exit(f"✗ {rel}: expected 1 match, found {n}:\n    {old.strip()[:90]}\nNothing was changed. Send this output to the Wakeloom maintainer.")
             out = out.replace(old, new)
         compile(out, str(p), "exec")
         todo.append((p, out))

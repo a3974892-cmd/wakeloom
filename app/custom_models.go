@@ -1414,6 +1414,13 @@ func validateAI(raw any, models map[string]string) error {
 				return errors.New("ai.llm.ctx 必须是整数")
 			}
 		}
+		engine := fmt.Sprint(nonNilStr(l["engine"]))
+		if engine != "" {
+			n, _ := asInt(l["ctx"])
+			if engine != "llama_cpp_1m" || n != 1000000 || !strings.Contains(models[mid], "Qwen3.8-27B") || fmt.Sprint(nonNilStr(l["projector"])) != "" {
+				return errors.New("1M 实验配置需要 Qwen3.8-27B 纯文字 GGUF、ctx=1000000，不支持视觉组件")
+			}
+		}
 		if v, ok := l["temperature"]; ok {
 			if _, ok := asFloat(v); !ok {
 				return errors.New("ai.llm.temperature 必须是数字")

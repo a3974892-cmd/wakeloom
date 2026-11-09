@@ -107,7 +107,11 @@ func aiReadPartImage(p aiAttachmentPart) (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
-func aiExpandStoredAttachments(ctx context.Context, messages []map[string]any, reserved int) (bool, []aiAttachmentUsage, error) {
+func aiExpandStoredAttachments(ctx context.Context, messages []map[string]any, reserved int, limits ...int) (bool, []aiAttachmentUsage, error) {
+	limit := aiTextLimit
+	if len(limits) > 0 {
+		limit = limits[0]
+	}
 	type ref struct {
 		owner, msg               int
 		part                     aiAttachmentPart
@@ -139,16 +143,22 @@ func aiExpandStoredAttachments(ctx context.Context, messages []map[string]any, r
 	}
 	terms := aiSkillQueryTerms(query)
 	order := 0
-	keep := func(candidate ref) {
-		refs = append(refs, candidate)
+	maxRefs := max(64, limit/1000+8)
+	trimRefs := func() {
 		sort.SliceStable(refs, func(i, j int) bool {
 			if refs[i].score != refs[j].score {
 				return refs[i].score > refs[j].score
 			}
 			return refs[i].order < refs[j].order
 		})
-		if len(refs) > 64 {
-			refs = refs[:64]
+		if len(refs) > maxRefs {
+			refs = refs[:maxRefs]
+		}
+	}
+	keep := func(candidate ref) {
+		refs = append(refs, candidate)
+		if len(refs) >= maxRefs*2 {
+			trimRefs()
 		}
 	}
 	for index, m := range messages {
@@ -214,8 +224,9 @@ func aiExpandStoredAttachments(ctx context.Context, messages []map[string]any, r
 		}
 		return directImages > 0, nil, nil
 	}
-	if base > aiTextLimit {
-		return false, nil, fmt.Errorf("聊天与技能主说明超过 %d 字，请新建对话或减少固定启用技能；附件已经保存在本机", aiTextLimit)
+	trimRefs()
+	if base > limit {
+		return false, nil, fmt.Errorf("本次聊天与技能超过 %d 字的发送预算；完整记录和附件仍保存在本机", limit)
 	}
 	selected := []ref{}
 	used := map[string]bool{}
@@ -229,7 +240,7 @@ func aiExpandStoredAttachments(ctx context.Context, messages []map[string]any, r
 	count := directImages
 	for _, p := range pictures {
 		caption := "\n[图片附件：" + p.part.Name + "]"
-		if count >= 8 || base+utf8.RuneCountInString(caption) > aiTextLimit {
+		if count >= 8 || base+utf8.RuneCountInString(caption) > limit {
 			usage[p.owner].OmittedImages++
 			continue
 		}
@@ -238,9 +249,13 @@ func aiExpandStoredAttachments(ctx context.Context, messages []map[string]any, r
 		count++
 	}
 	for _, candidate := range refs {
-		prompt := fmt.Sprintf("\n\n--- 附件内容：%s（第 %d–%d 字）---\n%s\n--- 附件片段结束 ---", candidate.part.Name, candidate.start, candidate.end, candidate.text)
+		kind := "附件内容"
+		if candidate.part.BinaryID != "" {
+			kind = "程序静态报告（仅结构/字符串线索，未执行、未反编译，不能据此确认实际行为）"
+		}
+		prompt := fmt.Sprintf("\n\n--- %s：%s（第 %d–%d 字）---\n%s\n--- 附件片段结束 ---", kind, candidate.part.Name, candidate.start, candidate.end, candidate.text)
 		n := utf8.RuneCountInString(prompt)
-		if base+n > aiTextLimit {
+		if base+n > limit {
 			continue
 		}
 		candidate.text = prompt

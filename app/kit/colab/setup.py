@@ -975,6 +975,148 @@ NODE_CLASS_MAPPINGS = {}
 OLLAMA = "http://127.0.0.1:11434"
 ALLOWED = ("api/chat", "api/generate", "api/tags", "api/ps", "api/show", "api/version",
            "v1/chat/completions", "v1/models")
+
+def _long_slot_capacity(slots):
+    # b12211 pads context to multiples of 256 (1,000,000 becomes 1,000,192).
+    # Keep a single real slot and the advertised 1M minimum, not exact equality.
+    if not isinstance(slots, list) or len(slots) != 1 or not isinstance(slots[0], dict):
+        return 0
+    capacity = slots[0].get("n_ctx")
+    return capacity if type(capacity) is int and capacity >= 1000000 else 0
+
+# Restricted text-only llama.cpp adapter; normal Ollama proxy remains unchanged.
+LLAMA = "http://127.0.0.1:11435"
+LONG_OUTPUT = 16384
+
+def _long_info():
+    try:
+        with open("/content/wb_ai.json") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _long_messages(body):
+    messages = body.get("messages") or []
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("messages required")
+    out = []
+    for message in messages:
+        if message.get("images"):
+            raise ValueError("1M experimental profile is text-only; use the vision profile for images")
+        if message.get("role") not in ("system", "user", "assistant") or not isinstance(message.get("content"), str):
+            raise ValueError("invalid text message")
+        out.append({"role": message["role"], "content": message["content"]})
+    return out
+
+async def _long_post(session, path, body):
+    async with session.post(LLAMA + path, json=body) as response:
+        if response.status != 200:
+            raise RuntimeError(f"1M service {path}: HTTP {response.status}: " + (await response.text())[:500])
+        return await response.json()
+
+async def _long_count(session, messages, think):
+    rendered = await _long_post(session, "/apply-template", {
+        "messages": messages, "chat_template_kwargs": {"enable_thinking": think}})
+    if not isinstance(rendered.get("prompt"), str):
+        raise RuntimeError("1M template service returned no prompt")
+    encoded = await _long_post(session, "/tokenize", {"content": rendered["prompt"], "add_special": True, "parse_special": True})
+    if not isinstance(encoded.get("tokens"), list):
+        raise RuntimeError("1M tokenizer returned no token count")
+    return len(encoded["tokens"])
+
+async def _wb_long_proxy(request, tail):
+    import asyncio
+    info = _long_info()
+    name = (info.get("llm") or {}).get("name")
+    if tail == "api/show":
+        return web.json_response({"capabilities": ["completion"], "model_info": {"qwen35.context_length": 1000000}})
+    if tail not in ("api/chat", "api/context-check") or request.method != "POST":
+        return web.json_response({"error": "not allowed in 1M profile"}, status=404)
+    try:
+        body = await request.json()
+        if body.get("model") != name or not info.get("context_verified"):
+            raise ValueError("1M runtime/model is not verified; wake the 1M profile again")
+        messages = _long_messages(body)
+        think = bool(body.get("think", False))
+        opts = body.get("options") or {}
+        if int(opts.get("num_ctx", 1000000)) != 1000000:
+            raise ValueError("1M profile requires num_ctx=1000000")
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=5, sock_read=3600)) as session:
+            # Verify live allocation as well as the startup report (no stale 1M label).
+            async with session.get(LLAMA + "/slots") as response:
+                slots = await response.json()
+            if not _long_slot_capacity(slots):
+                raise RuntimeError("1M slot allocation is no longer available")
+            count = await _long_count(session, messages, think)
+            budget = 1000000 - LONG_OUTPUT - 4096
+            if tail == "api/context-check":
+                return web.json_response({"tokens": count, "input_budget": budget, "context_tokens": 1000000})
+            if count > budget:
+                return web.json_response({"error": f"输入 {count} tokens，超过本次预算 {budget}；请缩短文字或附件。"}, status=400)
+            payload = {"model": name, "messages": messages, "stream": True,
+                       "max_tokens": LONG_OUTPUT, "temperature": opts.get("temperature", 0.7),
+                       "top_p": 0.95 if think else 0.8, "top_k": 20, "min_p": 0.0,
+                       "presence_penalty": 0.0 if think else 1.5, "repeat_penalty": 1.0,
+                       "chat_template_kwargs": {"enable_thinking": think},
+                       "stream_options": {"include_usage": True}}
+            if body.get("format") == "json":
+                payload["response_format"] = {"type": "json_object"}
+            out = web.StreamResponse(headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+            await out.prepare(request)
+            # Send headers before prefill; keep the proxy connection alive while the
+            # GPU processes a large prompt. Empty JSON is ignored by existing clients.
+            owner = asyncio.current_task()
+            async def heartbeat():
+                try:
+                    while True:
+                        await asyncio.sleep(15)
+                        await out.write(b"{}\n")
+                except (ConnectionResetError, RuntimeError):
+                    owner.cancel()
+            pulse = asyncio.create_task(heartbeat())
+            try:
+                await out.write((json.dumps({"wb_tokens": {"input": count, "window": 1000000, "output_reserved": LONG_OUTPUT}}) + "\n").encode())
+                async with session.post(LLAMA + "/v1/chat/completions", json=payload) as response:
+                    if response.status != 200:
+                        raise RuntimeError(f"1M inference HTTP {response.status}: " + (await response.text())[:1000])
+                    usage = {}
+                    ended = False
+                    async for line in response.content:
+                        if not line.startswith(b"data: "):
+                            continue
+                        value = line[6:].strip()
+                        if value == b"[DONE]":
+                            ended = True
+                            break
+                        event = json.loads(value)
+                        if event.get("error"):
+                            raise RuntimeError(str(event["error"])[:1000])
+                        if event.get("usage"):
+                            usage = event["usage"]
+                        for choice in event.get("choices", []):
+                            delta = choice.get("delta") or {}
+                            if delta.get("content") or delta.get("reasoning_content"):
+                                await out.write((json.dumps({"message": {"content": delta.get("content", ""), "thinking": delta.get("reasoning_content", "")}}) + "\n").encode())
+                    if not ended:
+                        raise RuntimeError("1M response stream ended early; see diagnostic logs")
+                    await out.write((json.dumps({"done": True, "eval_count": usage.get("completion_tokens", 0)}) + "\n").encode())
+            except (ConnectionResetError, asyncio.CancelledError):
+                raise
+            except Exception as e:
+                await out.write((json.dumps({"error": str(e)[:1000]}) + "\n").encode())
+            finally:
+                pulse.cancel()
+                try:
+                    await pulse
+                except asyncio.CancelledError:
+                    pass
+            await out.write_eof()
+            return out
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        return web.json_response({"error": "1M 服务错误：" + str(e)[:1000]}, status=502)
+
 _routes = PromptServer.instance.routes
 
 
@@ -987,7 +1129,8 @@ async def _wb_info(request):
     up = False
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as s:
-            async with s.get(OLLAMA + "/api/version") as r:
+            endpoint = LLAMA + "/health" if (info.get("llm") or {}).get("engine") == "llama_cpp_1m" else OLLAMA + "/api/version"
+            async with s.get(endpoint) as r:
                 up = r.status == 200
     except Exception:
         pass
@@ -997,6 +1140,9 @@ async def _wb_info(request):
 @_routes.route("*", "/wbllm/{tail:.*}")
 async def _wb_proxy(request):
     tail = request.match_info["tail"]
+    if (_long_info().get("llm") or {}).get("engine") == "llama_cpp_1m":
+        request._client_max_size = 32 << 20
+        return await _wb_long_proxy(request, tail)
     if tail not in ALLOWED:
         return web.json_response({"error": "not allowed"}, status=404)
     body = await request.read()
@@ -1019,9 +1165,215 @@ async def _wb_proxy(request):
 """
 
 
+_WB_OLLAMA_MODELS = "/content/ollama_models"
+
+
+def _ollama_prepare_storage():
+    """Keep the original disk path unless importing would exhaust it. Called before serve.
+    A RAM source plus a disk blob plus compat-migrate can otherwise require three copies.
+    Only enlarge our existing tmpfs, leaving explicit headroom for the runtime."""
+    global _WB_OLLAMA_MODELS
+    total = sum(int((m.get("size_gb") or 0) * 1e9) for m in PLAN.get("models", []))
+    if total <= 0:
+        return
+    disk = "/content/ollama_models"
+    os.makedirs(disk, exist_ok=True)
+    budget = int(total * 2.2) + 4_000_000_000
+    disk_needed = int(total * 1.1) + 2_000_000_000  # source will be linked, only rewrite needs disk
+    free = shutil.disk_usage(disk).free
+    print(f"KIT_OLLAMA_STORAGE disk_free={free / 1e9:.1f}GB linked_import_budget={disk_needed / 1e9:.1f}GB", flush=True)
+    if free >= disk_needed:
+        print("KIT_OLLAMA_STORAGE keeping disk with verified source-link reuse; copy fallback requires a separate capacity check", flush=True)
+        return
+    root = globals().get("STORE_ROOT")
+    # Do not turn a disk profile into a RAM profile, alter another mount, or move existing models.
+    if root != "/mnt/ram" or not os.path.ismount(root):
+        print(f"KIT_OLLAMA_STORAGE keeping disk; model_store={root!r}; no active managed RAM mount", flush=True)
+        return
+    if os.listdir(disk):
+        print("KIT_OLLAMA_STORAGE existing model store retained", flush=True)
+        return
+    # Account for RAM already occupied by this tmpfs while downloads overlap installation.
+    available = mem_available()
+    usage = shutil.disk_usage(root)
+    required = max(0, budget - (usage.total - usage.free)) + 24_000_000_000
+    if available < required:
+        print(f"KIT_OLLAMA_STORAGE RAM reserve insufficient: {available / 1e9:.1f}GB < {required / 1e9:.1f}GB; keeping disk", flush=True)
+        return
+    size_mb = (budget + (1 << 20) - 1) // (1 << 20)
+    current = usage.total
+    size_mb = max(size_mb, (current + (1 << 20) - 1) // (1 << 20))
+    try:
+        rc = subprocess.run(["mount", "-o", f"remount,size={size_mb}M", root],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        print("KIT_OLLAMA_STORAGE tmpfs resize unavailable; keeping disk", flush=True)
+        return
+    if rc.returncode:
+        print("KIT_OLLAMA_STORAGE tmpfs resize failed; keeping disk", flush=True)
+        return
+    candidate = os.path.join(root, "ollama_models")
+    os.makedirs(candidate, exist_ok=True)
+    if os.stat(candidate).st_dev != os.stat(os.path.join(root, "models")).st_dev:
+        raise RuntimeError("Ollama RAM store is not on the model filesystem")
+    _WB_OLLAMA_MODELS = candidate
+    print(f"KIT_OLLAMA_STORAGE RAM selected; capacity={size_mb / 1024:.1f}GiB; source hard-link reuse and compatibility rewrite reserve", flush=True)
+
+
+def _ollama_check_import_space(path, reused):
+    """Reserve another full GGUF for Ollama's compatibility metadata rewrite."""
+    blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
+    os.makedirs(blobs, exist_ok=True)
+    size = os.path.getsize(path)
+    needed = int(size * (1.1 if reused else 2.1)) + 2_000_000_000
+    free = shutil.disk_usage(blobs).free
+    print(f"KIT_OLLAMA_STORAGE before_import free={free / 1e9:.1f}GB required={needed / 1e9:.1f}GB reused={reused}", flush=True)
+    if free < needed:
+        raise RuntimeError(f"Ollama import storage insufficient: {free / 1e9:.1f} GB free, {needed / 1e9:.1f} GB required including compatibility conversion. Use a VM with more disk/RAM or a smaller quantization; import was not started.")
+    if _ollama_env()["OLLAMA_MODELS"].startswith("/mnt/ram/") and mem_available() < needed + 24_000_000_000:
+        raise RuntimeError("Ollama import RAM reserve insufficient; import was not started. Use a VM with more RAM or a smaller quantization.")
+
+
+
+def _long_slot_capacity(slots):
+    # b12211 pads context to multiples of 256 (1,000,000 becomes 1,000,192).
+    # Keep a single real slot and the advertised 1M minimum, not exact equality.
+    if not isinstance(slots, list) or len(slots) != 1 or not isinstance(slots[0], dict):
+        return 0
+    capacity = slots[0].get("n_ctx")
+    return capacity if type(capacity) is int and capacity >= 1000000 else 0
+
+LLAMA_ROOT = "/content/wb_llama_b12211"
+LLAMA_URL = "http://127.0.0.1:11435"
+LLAMA_ASSETS = (
+    ("llama-b12211-bin-ubuntu-cuda-12.8-x64.tar.gz", 188258232, 724566843,
+     "103fac975e807da6cdb5717e87ca594e25bb7703dd8a7f10c22269c124e1a552"),
+    ("cudart-llama-b12211-bin-ubuntu-cuda-12.8-x64.tar.gz", 594373633, 724560807,
+     "d66dba34f0e45c66ce7d4484116c681aa71ff257ee1e47b02d9775aa59b5ef77"),
+)
+
+def llama_install():
+    import hashlib
+    import tarfile
+    from pathlib import Path
+    root = Path(LLAMA_ROOT)
+    root.mkdir(parents=True, exist_ok=True)
+    for name, size, asset_id, digest in LLAMA_ASSETS:
+        archive = root / name
+        last = None
+        for attempt in range(1, 5):
+            try:
+                print(f"KIT_LONG_CONTEXT download {name} attempt {attempt}/4", flush=True)
+                url = (f"https://api.github.com/repos/ggml-org/llama.cpp/releases/assets/{asset_id}" if attempt % 2 else
+                       "https://github.com/ggml-org/llama.cpp/releases/download/b12211/" + name)
+                req = urllib.request.Request(
+                    url, headers={"User-Agent": "wakeloom-kit", "Accept": "application/octet-stream"})
+                h, count, tick = hashlib.sha256(), 0, time.monotonic()
+                with urllib.request.urlopen(req, timeout=60) as response, open(archive, "wb") as out:
+                    while True:
+                        chunk = response.read(4 << 20)
+                        if not chunk:
+                            break
+                        count += len(chunk)
+                        if count > size:
+                            raise RuntimeError("llama.cpp archive exceeds expected size")
+                        h.update(chunk)
+                        out.write(chunk)
+                        if time.monotonic() - tick >= 10:
+                            print(f"KIT_LONG_CONTEXT download {count//1000000}/{size//1000000} MB", flush=True)
+                            tick = time.monotonic()
+                if count != size or h.hexdigest() != digest:
+                    raise RuntimeError("llama.cpp archive size/SHA-256 mismatch")
+                with tarfile.open(archive, "r:gz") as tf:
+                    # Python's data filter validates paths and links within the install root.
+                    tf.extractall(root, filter="data")
+                archive.unlink()
+                break
+            except Exception as e:
+                last = e
+                archive.unlink(missing_ok=True)
+                print(f"KIT_LONG_CONTEXT download failed: {type(e).__name__}: {e}", flush=True)
+                if attempt == 4:
+                    raise RuntimeError(f"llama.cpp install failed: {last}") from e
+                time.sleep(attempt * 2)
+    if not list(root.rglob("llama-server")):
+        raise RuntimeError("verified archive did not contain llama-server")
+
+def llama_command(binary, path, name):
+    return [str(binary), "--model", path, "--alias", name,
+            "--host", "127.0.0.1", "--port", "11435", "--ctx-size", "1000000",
+            "--parallel", "1", "--n-gpu-layers", "999", "--flash-attn", "on",
+            "--cache-type-k", "q8_0", "--cache-type-v", "q8_0",
+            "--rope-scaling", "yarn", "--rope-scale", "4", "--yarn-orig-ctx", "262144",
+            "--override-kv", "qwen35.context_length=int:1000000",
+            "--batch-size", "2048", "--ubatch-size", "512", "--jinja",
+            "--no-context-shift", "--fit", "off", "--slots"]
+
+def llama_finish(llm):
+    from pathlib import Path
+    root = Path(LLAMA_ROOT)
+    binary = next(root.rglob("llama-server"))
+    binary.chmod(0o755)
+    path = os.path.realpath(f"{COMFY}/models/{llm['dest']}")
+    if not os.path.isfile(path):
+        raise RuntimeError("1M model file missing")
+    # No silent CPU fallback for a large 1M cache; normal profiles remain available.
+    gpu = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"], text=True)
+    if max(int(x.strip()) for x in gpu.splitlines() if x.strip()) < 80000:
+        raise RuntimeError("1M experimental profile requires at least 80 GB GPU memory; choose the normal 32K profile")
+    libdirs = sorted({str(p.parent) for p in root.rglob("*.so*")})
+    env = {**os.environ, "LD_LIBRARY_PATH": ":".join(libdirs + [os.environ.get("LD_LIBRARY_PATH", "")])}
+    for key in ("HF_TOKEN", "CF_TUNNEL_TOKEN"):
+        env.pop(key, None)
+    cmd = llama_command(binary, path, llm["name"])
+    print("KIT_LONG_CONTEXT loading 1,000,000 tokens; YaRN x4; Q8 KV; one slot; experimental", flush=True)
+    with open(f"{LOG}/llama.log", "a") as log:
+        process = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    for step in range(600):
+        if process.poll() is not None:
+            tail = Path(f"{LOG}/llama.log").read_text(errors="replace")[-6000:]
+            raise RuntimeError("1M runtime exited during loading:\n" + tail)
+        try:
+            with urllib.request.urlopen(LLAMA_URL + "/slots", timeout=3) as response:
+                slots = json.load(response)
+        except Exception:
+            if step % 5 == 0:
+                print(f"KIT_LONG_CONTEXT loading: {step*2}s", flush=True)
+            time.sleep(2)
+            continue
+        capacity = _long_slot_capacity(slots)
+        observed = [slot.get("n_ctx") if isinstance(slot, dict) else None for slot in slots] if isinstance(slots, list) else None
+        print(f"KIT_LONG_CONTEXT requested=1000000 slot_contexts={observed}", flush=True)
+        if not capacity:
+            process.terminate()
+            raise RuntimeError(f"1M slot allocation mismatch: expected one slot >=1000000, received {observed}; refusing to report ready")
+        break
+    else:
+        process.terminate()
+        raise RuntimeError("1M runtime did not confirm a 1,000,000-token slot; see kit_logs/llama.log")
+    # Short inference catches template/backend faults; not a 1M retrieval benchmark.
+    req = urllib.request.Request(LLAMA_URL + "/v1/chat/completions", method="POST",
+        data=json.dumps({"model": llm["name"], "messages": [{"role": "user", "content": "Reply OK"}],
+                         "stream": False, "max_tokens": 16, "chat_template_kwargs": {"enable_thinking": False}}).encode(),
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as response:
+            result = json.load(response)
+        if not result.get("choices") or not result["choices"][0].get("message", {}).get("content"):
+            raise RuntimeError("1M short inference check returned no text")
+    except Exception:
+        process.terminate()
+        raise
+    with open(AI_INFO) as f:
+        info = json.load(f)
+    info.update(ready=True, context_verified=True, context_tokens=1000000, allocated_context_tokens=capacity, vision=False)
+    with open(AI_INFO, "w") as f:
+        json.dump(info, f)
+    print(f"KIT_LONG_CONTEXT allocated={capacity} advertised=1000000; short inference passed; full-window quality untested", flush=True)
+
 def _ollama_env():
     llm = (PLAN.get("ai") or {}).get("llm") or {}
-    env = {**os.environ, "OLLAMA_HOST": "127.0.0.1:11434", "OLLAMA_MODELS": "/content/ollama_models",
+    env = {**os.environ, "OLLAMA_HOST": "127.0.0.1:11434", "OLLAMA_MODELS": _WB_OLLAMA_MODELS,
            "OLLAMA_KEEP_ALIVE": "-1", "OLLAMA_CONTEXT_LENGTH": str(llm.get("ctx", 32768)),
            "OLLAMA_FLASH_ATTENTION": "1", "OLLAMA_NUM_PARALLEL": "1"}
     for k in ("HF_TOKEN", "CF_TUNNEL_TOKEN"):
@@ -1226,8 +1578,12 @@ def ai_prepare():
 
     def run():
         try:
+            if (ai.get("llm") or {}).get("engine") == "llama_cpp_1m":
+                llama_install()
+                return
             if not _ollama_bin():
                 ollama_install()
+            _ollama_prepare_storage()
             ollama_serve()
         except Exception as e:  # noqa: BLE001
             box["error"] = e
@@ -1249,19 +1605,24 @@ def _dir_bytes(d):
 
 
 def _ollama_seed_blob(path, every=10):
-    """Reuse the completed GGUF on the same filesystem instead of copying it into Ollama.
+    """Reuse the completed GGUF instead of copying it into Ollama.
     The normal CLI still hashes the source, registers the model and chooses its original defaults.
+    Across filesystems, a verified symlink keeps the completed VM model in its original store.
+    The source must remain for the VM lifetime; never move/delete it after registration.
     If linking is unavailable, leave both files untouched and use the original import path."""
     import hashlib
+    import errno
 
     blobs = os.path.join(_ollama_env()["OLLAMA_MODELS"], "blobs")
     linked = None
     try:
         os.makedirs(blobs, exist_ok=True)
+        path = os.path.realpath(path)
         source = os.stat(path)
-        if source.st_size <= 0 or source.st_dev != os.stat(blobs).st_dev:
-            print("  blob reuse unavailable across filesystems; using standard import", flush=True)
+        if source.st_size <= 0:
             return False
+        cross_fs = source.st_dev != os.stat(blobs).st_dev
+        print(f"KIT_OLLAMA_STORAGE source_device={source.st_dev} blob_device={os.stat(blobs).st_dev} cross_filesystem={cross_fs}", flush=True)
 
         def identity(st):
             return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
@@ -1285,12 +1646,24 @@ def _ollama_seed_blob(path, every=10):
         blob = os.path.join(blobs, "sha256-" + digest.hexdigest())
         if os.path.lexists(blob):
             return False  # never replace a pre-existing blob or link
-        os.link(path, blob)
+        link_kind = "hardlink"
+        if cross_fs:
+            os.symlink(path, blob)
+            link_kind = "symlink"
+        else:
+            try:
+                os.link(path, blob)
+            except OSError as link_error:
+                if link_error.errno != errno.EXDEV:
+                    raise
+                # Bind/overlay mounts can report equal device IDs yet reject a hard link.
+                os.symlink(path, blob)
+                link_kind = "symlink"
         linked = blob
         if identity(os.stat(blob)) != identity(source):
             os.unlink(blob)
             return False
-        print(f"  reusing {source.st_size / 1e9:.1f} GB model without an extra copy", flush=True)
+        print(f"  reusing {source.st_size / 1e9:.1f} GB model without an extra copy ({link_kind}); source retained", flush=True)
         return True
     except OSError as e:
         if linked:
@@ -1311,6 +1684,7 @@ def _ollama_create(name, mf, path, every=10):
     print(f"registering {os.path.basename(path)} ({size / 1e9:.1f} GB) with Ollama as {name} …", flush=True)
     t0 = time.time()
     reused = _ollama_seed_blob(path, every)
+    _ollama_check_import_space(path, reused)
     base = _dir_bytes(blobs)
     p = subprocess.Popen([_ollama_bin() or "ollama", "create", name, "-f", mf], env=_ollama_env(),
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -1342,9 +1716,8 @@ def _ollama_create(name, mf, path, every=10):
             break
         except subprocess.TimeoutExpired:
             done = max(0, _dir_bytes(blobs) - base)
-            pct = f" ({min(100, done * 100 // size)}%)" if size else ""
             msg = (f"  … {int(time.time() - t0)}s, reusing model file; preparing Ollama metadata" if reused else
-                   f"  … {int(time.time() - t0)}s, written {done / 1e9:.1f}/{size / 1e9:.1f} GB{pct}")
+                   f"  … {int(time.time() - t0)}s, import writes {done / 1e9:.1f} GB (source {size / 1e9:.1f} GB; includes compatibility conversion)")
             if state["last"]:
                 msg += f" · {state['last'][:100]}"
             print(msg, flush=True)
@@ -1395,9 +1768,12 @@ def ai_finish(prep):
     with Stage("llm"):
         t.join(900)
         if t.is_alive():
-            raise RuntimeError("Ollama install timed out")
+            raise RuntimeError("1M runtime install timed out" if llm.get("engine") == "llama_cpp_1m" else "Ollama install timed out")
         if box.get("error"):
             raise box["error"]
+        if llm.get("engine") == "llama_cpp_1m":
+            llama_finish(llm)
+            return
         path = os.path.realpath(f"{COMFY}/models/{llm['dest']}")
         if not os.path.isfile(path):
             raise RuntimeError(f"LLM model file missing: {llm['dest']}")
@@ -1563,7 +1939,7 @@ def watchdog():
             print("[watchdog] quick tunnel died; restarting", flush=True)
             start_quick_tunnel()
 
-        if (PLAN.get("ai") or {}).get("type") == "llm" and _ollama_bin() and not _ollama_up():
+        if (PLAN.get("ai") or {}).get("type") == "llm" and ((PLAN.get("ai") or {}).get("llm") or {}).get("engine") != "llama_cpp_1m" and _ollama_bin() and not _ollama_up():
             print("[watchdog] ollama died; restarting", flush=True)
             try:
                 ollama_serve()

@@ -64,6 +64,10 @@ type CCUInfo struct {
 var colabHTTP = &http.Client{Transport: transport, Timeout: 5 * time.Minute}
 
 func colabDo(ctx context.Context, method, rawURL string, headers map[string]string, out any) error {
+	return colabDoWithClient(ctx, colabHTTP, method, rawURL, headers, out)
+}
+
+func colabDoWithClient(ctx context.Context, client *http.Client, method, rawURL string, headers map[string]string, out any) error {
 	tok, err := googleAccess(ctx)
 	if err != nil {
 		return err
@@ -79,7 +83,23 @@ func colabDo(ctx context.Context, method, rawURL string, headers map[string]stri
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := colabHTTP.Do(req)
+	started := time.Now()
+	allocating := req.URL.Path == "/tun/m/assign"
+	if allocating {
+		route := "direct"
+		if p, _ := proxyFor(req); p != nil {
+			route = "proxy " + p.Host // no credentials or query parameters
+		}
+		diagEvent("info", "colab", fmt.Sprintf("allocation %s started route=%s", method, route))
+	}
+	resp, err := client.Do(req)
+	if allocating {
+		if err != nil {
+			diagEvent("error", "colab", fmt.Sprintf("allocation %s after %.1fs: %v", method, time.Since(started).Seconds(), err))
+		} else {
+			diagEvent("info", "colab", fmt.Sprintf("allocation %s response HTTP %d via %s after %.1fs", method, resp.StatusCode, resp.Proto, time.Since(started).Seconds()))
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("连不上 Colab：%w", err)
 	}
@@ -141,9 +161,38 @@ func nbHash() string {
 // colabAssign allocates a runtime with the given accelerator ("L4", "G4", "A100", "T4", …).
 var colabAssignTimeout = 3 * time.Minute
 
+// Allocation can legitimately wait longer than the shared transport's 60s
+// header timeout. Its context owns the total deadline (including retries).
+// Clone the transport: balance queries, gateway calls and transfers keep their
+// existing timeouts, proxy selection and HTTP/2 support.
+func colabAllocationHTTP() *http.Client {
+	c := *colabHTTP
+	c.Timeout = 0
+	if tr, ok := c.Transport.(*http.Transport); ok {
+		tr = tr.Clone()
+		tr.ResponseHeaderTimeout = 0
+		// Use HTTP/1.1 for allocation only. Some proxy paths drop the long
+		// assignment response over HTTP/2; this is a compatibility measure,
+		// not a workaround for account quotas or GPU availability.
+		tr.Protocols = new(http.Protocols)
+		tr.Protocols.SetHTTP1(true)
+		tr.ForceAttemptHTTP2 = false
+		if tr.TLSClientConfig != nil {
+			// Clone also carries ALPN values from an already-used HTTP/2
+			// transport. Do not advertise h2 while speaking HTTP/1.1.
+			tr.TLSClientConfig.NextProtos = []string{"http/1.1"}
+		}
+		c.Transport = tr
+	}
+	return &c
+}
+
 func colabAssign(parent context.Context, accelerator string) (assignment *Assignment, resultErr error) {
 	ctx, cancel := context.WithTimeout(parent, colabAssignTimeout)
 	defer cancel()
+	client := colabAllocationHTTP()
+	defer client.CloseIdleConnections()
+	diagEvent("info", "colab", "allocation compatibility policy: HTTP/1.1; total deadline 3 minutes")
 	defer func() {
 		if resultErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && parent.Err() == nil {
 			resultErr = errors.New("申请 GPU 超时，已停止等待。可能是额度、库存或网络问题；请先到 Colab 检查是否已有运行时，再重试或更换 GPU")
@@ -159,7 +208,7 @@ func colabAssign(parent context.Context, accelerator string) (assignment *Assign
 		Endpoint string    `json:"endpoint"`
 		Proxy    ProxyInfo `json:"runtimeProxyInfo"`
 	}
-	if err := colabDo(ctx, "GET", u, nil, &probe); err != nil {
+	if err := colabDoWithClient(ctx, client, "GET", u, nil, &probe); err != nil {
 		return nil, err
 	}
 	if probe.Endpoint != "" && probe.Proxy.URL != "" { // already assigned for this notebook
@@ -168,7 +217,7 @@ func colabAssign(parent context.Context, accelerator string) (assignment *Assign
 	var a Assignment
 	var err error
 	for attempt := 0; attempt < 4; attempt++ {
-		err = colabDo(ctx, "POST", u, map[string]string{"X-Goog-Colab-Token": probe.Token}, &a)
+		err = colabDoWithClient(ctx, client, "POST", u, map[string]string{"X-Goog-Colab-Token": probe.Token}, &a)
 		var ce *ColabError
 		if err == nil || !(errors.As(err, &ce) && (ce.Status == 502 || ce.Status == 503 || ce.Status == 504)) {
 			break
@@ -184,6 +233,31 @@ func colabAssign(parent context.Context, accelerator string) (assignment *Assign
 		}
 	}
 	if err != nil {
+		var requestErr *url.Error
+		uncertain := errors.As(err, &requestErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+		if uncertain && ctx.Err() == nil {
+			// A dropped response does not prove the allocation failed. Look up
+			// this exact notebook hash, never adopt another notebook's VM and
+			// never replay an uncertain POST. Stay within the original deadline.
+			diagEvent("warn", "colab", "allocation response lost; checking the same notebook without another POST")
+			checkCtx, checkCancel := context.WithTimeout(ctx, 20*time.Second)
+			var recovered Assignment
+			checkErr := colabDoWithClient(checkCtx, client, "GET", u, nil, &recovered)
+			checkCancel()
+			if checkErr == nil && recovered.Endpoint != "" && recovered.Proxy.URL != "" {
+				if recovered.Accelerator == "" {
+					recovered.Accelerator = accelerator
+				}
+				diagEvent("info", "colab", "recovered allocation for the same notebook after lost response")
+				return &recovered, nil
+			}
+			if checkErr != nil {
+				diagEvent("warn", "colab", fmt.Sprintf("allocation recovery query failed: %v", checkErr))
+			} else {
+				diagEvent("warn", "colab", "allocation recovery query did not return a complete runtime")
+			}
+			return nil, fmt.Errorf("申请连接中断，暂未确认分配结果；为避免重复开机，没有重发申请。请先在 Colab 检查运行时；这不代表余额不足。原始错误：%w", err)
+		}
 		return nil, err
 	}
 	if a.Proxy.URL == "" {

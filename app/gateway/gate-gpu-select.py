@@ -71,7 +71,7 @@ def patch(path: pathlib.Path, edits):
         n = out.count(old)
         if n != 1:
             sys.exit(f"✗ {path.relative_to(ROOT)}: expected 1 match, found {n}:\n    {old.strip()[:90]}\n"
-                     "Nothing was changed. Send this output to Claude.")
+                     "Nothing was changed. Send this output to the Wakeloom maintainer.")
         out = out.replace(old, new)
     return out
 

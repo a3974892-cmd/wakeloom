@@ -99,8 +99,9 @@ function aiPickRender() {
       }
       const a = p.ai, llm = a.type === "llm";
       const chroma = !llm && a.image.arch === "chroma";
-      const meta = llm ? `Ollama · 上下文 ${Math.round((a.llm.ctx || 32768) / 1024)}K` : `${chroma ? "Chroma (FLUX)" : "SDXL 检查点"} · 默认 ${a.image.width}×${a.image.height} · ${a.image.steps} 步`;
-      const gpu = p.id.startsWith("custom-") ? `建议 ${p.accelerator || "L4"}` : llm ? "建议 G4 / A100 / H100（显存 ≥ 40 GB）" : chroma ? "建议 G4 / A100（显存 ≥ 32 GB）" : "任意 GPU（L4 就够）";
+      const long = llm && a.llm.engine === "llama_cpp_1m";
+      const meta = long ? "1,000,000 tokens · 实验 · 纯文字" : llm ? `Ollama · 上下文 ${Math.round((a.llm.ctx || 32768) / 1024)}K` : `${chroma ? "Chroma (FLUX)" : "SDXL 检查点"} · 默认 ${a.image.width}×${a.image.height} · ${a.image.steps} 步`;
+      const gpu = long ? "显存至少 80 GB；长输入处理较慢，完整窗口效果待测试" : p.id.startsWith("custom-") ? `建议 ${p.accelerator || "L4"}` : llm ? "建议 G4 / A100 / H100（显存 ≥ 40 GB）" : chroma ? "建议 G4 / A100（显存 ≥ 32 GB）" : "任意 GPU（L4 就够）";
       const btn = wakeBtn;
       return `<div class="card ai-card"><div class="row between"><span class="pill ${problem ? "bad" : llm ? "llm" : "img"}">${llm ? "对话" : "生图"}</span><span class="muted small mono">约 ${p.size_gb_default ?? "?"} GB</span></div>
         <h3>${esc(a.title || p.title)}</h3><p class="muted small">${p.id.startsWith("custom-") ? "自定义模型" : esc(p.title)}</p><p class="small">${esc(meta)}</p><p class="muted small">${esc(gpu)}</p>${bad}
@@ -181,17 +182,51 @@ $("#aiNew").onclick = () => { if (AI.busy) return; AI.cur = ""; aiSaveConvs(); a
 function mdLite(s) {
   const parts = String(s || "").split(/```/);
   return parts.map((p, i) => {
-    if (i % 2) { const nl = p.indexOf("\n"); const code = nl >= 0 && /^[\w+-]*$/.test(p.slice(0, nl).trim()) ? p.slice(nl + 1) : p; return `<pre><code>${esc(code.replace(/\n$/, ""))}</code></pre>`; }
+    if (i % 2) {
+      const nl = p.indexOf("\n"), hasLanguage = nl >= 0 && /^[\w+#.-]*$/.test(p.slice(0, nl).trim());
+      const language = hasLanguage ? p.slice(0, nl).trim() : "", code = hasLanguage ? p.slice(nl + 1) : p;
+      return `<div class="ai-code-block"><div class="ai-code-head"><span>${esc(language || "代码")}</span><button type="button" class="btn ghost xs" data-code-copy aria-label="复制代码">复制代码</button></div><pre><code>${esc(code.replace(/\r?\n$/, ""))}</code></pre></div>`;
+    }
     return esc(p).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
       .replace(/^#{1,6} (.+)$/gm, "<b class=\"h\">$1</b>");
   }).join("");
 }
+function aiMessageTime(m) {
+  const date = typeof m.created_at === "number" && m.created_at > 0 ? new Date(m.created_at) : null;
+  if (!date || !Number.isFinite(date.getTime())) return '<span class="ai-message-time">时间未记录</span>';
+  const pad = n => String(n).padStart(2, "0");
+  const text = `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return `<time class="ai-message-time" datetime="${date.toISOString()}" title="${m.role === "user" ? "发送时间" : "回复开始时间"}（本机时间）">${text}</time>`;
+}
+async function aiCopyChatText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* WebView permission may be unavailable. */ }
+  const input = document.createElement("textarea"), active = document.activeElement;
+  input.value = text; input.readOnly = true; input.style.cssText = "position:fixed;left:-9999px;top:0";
+  document.body.appendChild(input); input.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch { }
+  input.remove(); if (active && active.isConnected) active.focus({preventScroll:true});
+  if (!copied) {
+    openModal('<div class="row between"><h3>复制内容</h3><button type="button" class="btn ghost sm" data-close>关闭</button></div><p class="hint">未能自动复制，请按 Ctrl+C 复制下方已选内容。</p><textarea id="aiManualCopy" class="diag-preview" readonly></textarea>');
+    const field = $("#aiManualCopy"); field.value = text; field.focus(); field.select();
+  }
+  return copied;
+}
+$("#aiMsgs").addEventListener("click", async event => {
+  const button = event.target.closest("[data-code-copy]"); if (!button) return;
+  const code = button.closest(".ai-code-block")?.querySelector("pre code"); if (!code) return;
+  const text = code.textContent; // Capture this block before a streaming repaint replaces it.
+  if (await aiCopyChatText(text)) {
+    toast("代码已复制"); button.textContent = "已复制";
+    setTimeout(() => { if (button.isConnected) button.textContent = "复制代码"; }, 1800);
+  }
+});
 function aiMsgHTML(m, i, last) {
-  if (m.role === "user") return `<div class="ai-msg user" data-i="${i}"><div class="bubble">${esc(m.content)}${aiAttachmentCards(m.attachments || [])}</div></div>`;
+  if (m.role === "user") return `<div class="ai-msg user" data-i="${i}"><div class="ai-user-message"><div class="ai-message-meta"><span>你</span>${aiMessageTime(m)}</div><div class="bubble">${esc(m.content)}${aiAttachmentCards(m.attachments || [])}</div></div></div>`;
   const think = m.thinking ? `<details class="ai-think" ${m.streaming && !m.content ? "open" : ""}><summary>思考过程${m.streaming && !m.content ? "…" : ""}</summary><div>${esc(m.thinking)}</div></details>` : "";
   const body = m.error ? `<p class="err">${esc(m.error)}</p>` : `<div class="md">${mdLite(m.content)}${m.streaming ? '<span class="caret"></span>' : ""}</div>`;
   const acts = m.streaming ? "" : `<div class="ai-acts"><button class="btn ghost xs" data-ma="copy" data-i="${i}">复制</button><button class="btn ghost xs" data-ma="use" data-i="${i}">用作生成提示词</button>${last ? `<button class="btn ghost xs" data-ma="again" data-i="${i}">重新回答</button>` : ""}<span class="muted small mono">${esc(m.stats || "")}</span></div>`;
-  return `<div class="ai-msg bot" data-i="${i}">${aiContextUsageHTML(m.context_usage)}${aiSkillUsageHTML(m.skill_context)}${aiAttachmentUsageHTML(m.attachment_context)}${think}${body}${acts}</div>`;
+  return `<div class="ai-msg bot" data-i="${i}"><div class="ai-message-meta"><span>AI</span>${aiMessageTime(m)}</div>${aiContextUsageHTML(m.context_usage)}${aiSkillUsageHTML(m.skill_context)}${aiAttachmentUsageHTML(m.attachment_context)}${think}${body}${acts}</div>`;
 }
 function aiMsgs() {
   aiAttachmentsRender();
@@ -224,7 +259,7 @@ function aiUpdateLast() {
 }
 async function aiMsgAct(act, i) {
   const c = aiConv(); if (!c) return; const m = c.msgs[i]; if (!m) return;
-  if (act === "copy") { try { await navigator.clipboard.writeText(m.content); toast("已复制"); } catch { toast("复制失败"); } }
+  if (act === "copy") { if (await aiCopyChatText(m.content)) toast("已复制"); }
   if (act === "use") aiUseAsPrompt(m.content);
   if (act === "again") { if (AI.busy) return; c.msgs.splice(i, 1); aiSaveConvs(); aiMsgs(); aiStream(c); }
 }
@@ -248,12 +283,13 @@ function aiSend() {
   const attachments = aiPendingAttachments().slice();
   if ((!text && !attachments.length) || AI.busy || AI.chatLoading || AIA.uploading || !aiModelReady()) return;
   if (attachments.some(a => a.images > 0) && AI.info && AI.info.vision === false) {
+    if (AI.info.llm?.engine === "llama_cpp_1m") { aiAttachmentStatus("1M 实验配置目前仅支持文字。图片请使用原来的「对话与看图」配置；附件已保留。", true); return; }
     aiAttachmentStatus("当前模型尚未加载视觉组件。点击「启用看图」完成补装后，这些图片可继续发送。", true);aiVisionOpen();return;
   }
   const draftKey = aiAttachmentDraftKey();
   let c = aiConv();
   if (!c) { c = { id: Date.now().toString(36), title: (text || attachments[0].name).slice(0, 24), msgs: [], created: Date.now() }; AI.convs.unshift(c); AI.cur = c.id; }
-  c.msgs.push({ role: "user", content: text, ...(attachments.length ? { attachments } : {}) });
+  c.msgs.push({ role: "user", content: text, created_at: Date.now(), ...(attachments.length ? { attachments } : {}) });
   delete AIA.drafts[draftKey]; delete AIA.status[draftKey];
   $("#aiText").value = "";
   aiSaveConvs(); aiConvList(); aiMsgs();
@@ -266,7 +302,7 @@ async function aiStream(c) {
   const sys = $("#aiSys").value.trim();
   if (sys) msgs.push({ role: "system", content: sys });
   for (const m of c.msgs) if (!m.error) msgs.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map(a => ({ id: a.id })) } : {}) });
-  const bot = { role: "assistant", content: "", thinking: "", streaming: true };
+  const bot = { role: "assistant", content: "", thinking: "", streaming: true, created_at: Date.now() };
   c.msgs.push(bot); aiMsgs();
   const ctl = new AbortController(); AI.busy = ctl;
   aiAttachmentsRender();
@@ -276,7 +312,7 @@ async function aiStream(c) {
   try {
     const r = await fetch("/api/ai/chat", {
       method: "POST", signal: ctl.signal, headers: { "X-Key": KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: AI.info?.llm?.name||p.ai.llm.name, messages: msgs, skills: aiEnabledSkills(), skill_references: aiSkillReferenceSelection(), num_ctx:p.ai.llm.ctx||32768, think: $("#aiThink").checked, temperature: +$("#aiTemp").value })
+      body: JSON.stringify({ model: AI.info?.llm?.name||p.ai.llm.name, messages: msgs, skills: aiEnabledSkills(), skill_references: aiSkillReferenceSelection(), num_ctx:AI.info?.llm?.ctx||p.ai.llm.ctx||32768, think: $("#aiThink").checked, temperature: +$("#aiTemp").value })
     });
     if (!r.ok) { let e = "HTTP " + r.status; try { e = (await r.json()).error || e; } catch { } throw new Error(e); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";

@@ -45,6 +45,14 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/ollama-tests"
           "$RUNNER_TEMP/ollama-tests/bin/python" -m pip install zstandard==0.25.0
           "$RUNNER_TEMP/ollama-tests/bin/python" app/gateway/src/test_ollama_download.py
+      - name: Experimental 1M runtime and adapter checks
+        run: |
+          "$RUNNER_TEMP/ollama-tests/bin/python" -m pip install aiohttp==3.14.5
+          "$RUNNER_TEMP/ollama-tests/bin/python" app/gateway/src/test_long_context.py
+      - name: Storage reuse and cache checks
+        run: |
+          python3 app/gateway/src/test_ollama_storage.py
+          python3 app/gateway/src/test_download_cache.py
       - name: Build
         run: |
           mkdir dist
@@ -60,13 +68,13 @@ jobs:
           json.dump({"version": v, "url": f"https://github.com/{repo}/releases/download/v{v}/Wakeloom-{v}.exe",
                      "sha256": sha, "size": size, "notes": notes}, open("dist/latest.json", "w"), ensure_ascii=False)
           PY
-          cp app/gateway/gate-*.py dist/
+          cp app/gateway/gate-*.py app/gateway/prepare-download-cache.py dist/
           cp app/gateway/enable-*-vision.py app/gateway/enable-vision-on-vps.py dist/
           python3 - "$V" <<'PY'
           from pathlib import Path
           import sys, zipfile
           files = sorted(Path("app/gateway").glob("gate-*.py"))
-          files += [Path("app/gateway/enable-qwen-vision.py"), Path("app/gateway/enable-vision-on-vps.py"), Path("app/gateway/README.md")]
+          files += [Path("app/gateway/enable-qwen-vision.py"), Path("app/gateway/enable-vision-on-vps.py"), Path("app/gateway/README.md"), Path("app/gateway/prepare-download-cache.py")]
           with zipfile.ZipFile(f"dist/Wakeloom-{sys.argv[1]}-gateway.zip", "w", zipfile.ZIP_DEFLATED) as z:
               for path in files:
                   z.write(path, path.name)

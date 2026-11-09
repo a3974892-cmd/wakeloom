@@ -22,6 +22,8 @@ type aiChatState struct {
 
 var aiChatStateMu sync.Mutex
 
+const aiChatStateMaxBytes = 128 << 20 // 1M conversations can exceed browser/local 8 MB storage.
+
 func aiChatStatePath(profile string) (string, error) {
 	if profile == "" || len(profile) > 200 {
 		return "", errors.New("模型配置编号无效")
@@ -40,7 +42,7 @@ func readAIChatState(p string) (aiChatState, error) {
 		return s, e
 	}
 	defer f.Close()
-	e = json.NewDecoder(io.LimitReader(f, 8<<20)).Decode(&s)
+	e = json.NewDecoder(io.LimitReader(f, aiChatStateMaxBytes)).Decode(&s)
 	return s, e
 }
 
@@ -67,7 +69,7 @@ func aiChatStateHandler(w http.ResponseWriter, r *http.Request) {
 		Skills          *[]string            `json:"skills"`
 		SkillReferences *map[string][]string `json:"skill_references"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, aiChatStateMaxBytes)
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		errOut(w, 400, errors.New("对话记录过大或格式无效"))
 		return
@@ -104,8 +106,8 @@ func aiChatStateHandler(w http.ResponseWriter, r *http.Request) {
 		errOut(w, 500, marshalErr)
 		return
 	}
-	if len(raw) > 8<<20 {
-		errOut(w, 400, errors.New("对话记录超过 8 MB，请先导出重要内容并减少旧对话"))
+	if len(raw) > aiChatStateMaxBytes {
+		errOut(w, 400, errors.New("对话记录超过 128 MB，请先导出重要内容并减少旧对话"))
 		return
 	}
 	if err = os.MkdirAll(filepath.Dir(p), 0700); err == nil {

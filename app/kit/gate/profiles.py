@@ -207,9 +207,18 @@ def _parse_ai(raw, models: dict, pid: str) -> dict | None:
             temp = float(llm.get("temperature", 0.7))
         except (TypeError, ValueError):
             raise ProfileError(f"{ctx}.llm: ctx must be an integer and temperature a number") from None
+        engine = str(llm.get("engine") or "")
+        if engine not in ("", "llama_cpp_1m"):
+            raise ProfileError(f"{ctx}.llm.engine is not supported")
+        if engine == "llama_cpp_1m":
+            if int(llm.get("ctx", 0)) != 1000000 or llm.get("projector") or "Qwen3.8-27B" not in models[mid].dest:
+                raise ProfileError(f"{ctx}.llm: 1M requires Qwen3.8-27B text GGUF, ctx=1000000, no projector")
+            ctxlen = 1000000
         out["llm"] = {"model": mid, "dest": models[mid].dest, "name": name, "ctx": ctxlen,
                       "think": bool(llm.get("think", True)), "temperature": temp,
                       "system": str(llm.get("system") or "")[:4000]}
+        if engine:
+            out["llm"]["engine"] = engine
         uses = [mid]
         projector = str(llm.get("projector") or "")
         if projector:

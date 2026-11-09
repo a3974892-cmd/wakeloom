@@ -65,6 +65,9 @@ func (p *LocalProfile) aiSummary() map[string]any {
 		}
 		out["llm"] = map[string]any{"model": mid, "dest": dest[mid], "name": str("name", "wb-llm"), "ctx": int(num("ctx", 32768)),
 			"think": think, "temperature": num("temperature", 0.7), "system": str("system", "")}
+		if engine := str("engine", ""); engine != "" {
+			out["llm"].(map[string]any)["engine"] = engine
+		}
 		if projector := str("projector", ""); projector != "" {
 			if projector == mid || !strings.HasPrefix(dest[projector], "llm/") || !strings.HasSuffix(dest[projector], ".gguf") {
 				return nil
@@ -263,7 +266,7 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 		Skills          []string            `json:"skills"`
 		SkillReferences map[string][]string `json:"skill_references"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 32<<20)).Decode(&in); err != nil || in.Model == "" || len(in.Messages) == 0 {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, aiChatStateMaxBytes)).Decode(&in); err != nil || in.Model == "" || len(in.Messages) == 0 {
 		errOut(w, 400, errString("请求格式不对"))
 		return
 	}
@@ -275,12 +278,9 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var skillUsage []aiSkillUsage
 	var contextUsage aiContextUsage
-	in.Messages, skillUsage, contextUsage, err = aiPrepareChatContext(in.Messages, in.Skills, in.SkillReferences)
-	if err != nil {
-		errOut(w, 400, err)
-		return
-	}
-	hasImages, attachmentUsage, err := aiExpandStoredAttachments(r.Context(), in.Messages, 0)
+	var hasImages bool
+	var attachmentUsage []aiAttachmentUsage
+	in.Messages, skillUsage, contextUsage, hasImages, attachmentUsage, err = aiPrepareRequestContext(r, in.Model, in.Messages, in.Skills, in.SkillReferences, in.NumCtx, in.Think)
 	if err != nil {
 		errOut(w, 400, err)
 		return
@@ -310,6 +310,7 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 	if len(opts) > 0 {
 		body["options"] = opts
 	}
+	diagEvent("info", "ai", fmt.Sprintf("对话上下文：历史 %d/%d 条，节选 %d 条，未带入 %d 条；技能 %d 个；上下文窗口 %d", contextUsage.HistoryUsed, contextUsage.HistoryTotal, contextUsage.HistoryExcerpted, contextUsage.HistoryOmitted, len(skillUsage), in.NumCtx))
 	b, _ := json.Marshal(body)
 	resp, err := aiRequest(r, "POST", "api/chat", b)
 	if err != nil {
@@ -344,7 +345,7 @@ func aiChatHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
 	fl, _ := w.(http.Flusher)
-	if contextUsage.HistoryOmitted > 0 || contextUsage.SkillExcerpts > 0 || contextUsage.SkippedSkills > 0 {
+	if contextUsage.ContextTokens > 0 || contextUsage.HistoryTotal > 0 || contextUsage.SkillExcerpts > 0 || contextUsage.SkippedSkills > 0 {
 		json.NewEncoder(w).Encode(map[string]any{"wb_context": contextUsage})
 		if fl != nil {
 			fl.Flush()
@@ -519,5 +520,10 @@ func aiRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /api/ai/attachments/{id}/preview/{index}", aiAttachmentPreview)
 	api.HandleFunc("GET /api/ai/info", aiInfoHandler)
 	api.HandleFunc("POST /api/ai/chat", aiChatHandler)
+	api.HandleFunc("GET /api/ai/agent/support", agentSupport)
+	api.HandleFunc("POST /api/ai/agent/run", agentRun)
+	api.HandleFunc("POST /api/ai/agent/stop", agentStop)
+	api.HandleFunc("POST /api/ai/agent/answer", agentAnswer)
+	api.HandleFunc("GET /api/ai/agent/logs/{id}", agentLogs)
 	api.HandleFunc("POST /api/ai/image-template", aiImageTemplateHandler)
 }

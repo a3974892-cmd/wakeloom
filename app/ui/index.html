@@ -214,11 +214,19 @@
             <label class="ai-temp">温度 <input type="range" id="aiTemp" min="0" max="1.5" step="0.05"><b class="mono" id="aiTempV"></b></label>
             <button class="btn ghost xs" id="aiSysBtn">系统提示词</button>
             <button type="button" class="btn ghost xs" id="aiSkillsBtn">技能</button>
+            <button type="button" class="btn ghost xs" id="aiAgentBtn">自动执行</button>
+            <button type="button" class="btn ghost xs" id="aiAgentShow" hidden>执行记录</button>
             <span class="grow"></span>
             <span class="muted small mono" id="aiStats"></span>
           </div>
           <textarea id="aiSys" class="ai-sys" rows="3" placeholder="系统提示词（可选）：设定角色、语气、输出格式……" hidden></textarea>
+          <details id="aiAgentPanel" class="ai-agent-panel" hidden open>
+            <summary><span>自动执行 · <span id="aiAgentState">准备中</span></span><span class="ai-agent-head-actions"><button class="btn xs danger" id="aiAgentStop" type="button" hidden>停止任务</button><button class="btn ghost xs" id="aiAgentCollapse" type="button">收起</button><button class="btn ghost xs" id="aiAgentHide" type="button" title="隐藏面板，任务继续运行">隐藏</button></span></summary>
+            <div class="row wrap ai-agent-actions"><button class="btn ghost sm" id="aiAgentCopy" type="button">复制记录</button><button class="btn ghost sm" id="aiAgentExport" type="button">导出记录</button><label class="ai-agent-size">面板高度 <input id="aiAgentHeight" type="range" min="64" max="240" step="8" value="144" aria-label="执行记录高度"></label></div>
+            <pre id="aiAgentLog" tabindex="0" aria-label="自动执行记录"></pre>
+          </details>
           <div id="aiMsgs" class="ai-msgs"></div>
+          <div id="aiAgentReply" hidden><p id="aiAgentQuestion" class="ai-agent-question" role="status" aria-live="polite"></p><div class="ai-agent-reply-row"><textarea id="aiAgentAnswer" rows="2" aria-label="补充信息" placeholder="补充路径、工具情况或处理方法，请勿输入密码"></textarea><button class="btn primary sm" id="aiAgentContinue">继续执行</button></div></div>
           <div class="ai-attach-bar">
             <button type="button" class="btn sm" id="aiAttachFiles">＋ 文件 / 压缩包</button>
             <button type="button" class="btn ghost sm" id="aiAttachFolder">文件夹</button>
@@ -423,6 +431,7 @@
 <script src="ai-skills.js"></script>
 <script src="ai-chat-state.js"></script>
 <script src="ai.js"></script>
+<script src="ai-agent.js"></script>
 <script src="models.js"></script>
 <script src="userdata.js"></script>
 <script src="onboarding.js"></script>

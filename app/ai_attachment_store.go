@@ -317,14 +317,19 @@ func aiAttachmentFileKind(name string) string {
 		return "docx"
 	case ".png", ".jpg", ".jpeg", ".gif":
 		return "image"
+	case ".apk", ".aab", ".jar", ".exe", ".dll", ".sys", ".msi", ".so", ".dex", ".bin", ".elf":
+		return "binary"
 	}
 	if aiTextExtension(ext) || path.Base(name) == "README" || path.Base(name) == "LICENSE" || path.Base(name) == "Dockerfile" {
 		return "text"
 	}
-	return ""
+	return "auto"
 }
 
 func aiAddStoredPart(a *aiAttachment, p aiAttachmentPart) {
+	if p.BinaryID != "" {
+		a.BinaryFiles++
+	}
 	if p.ImageID != "" || p.Image != "" {
 		a.ImageParts = append(a.ImageParts, len(a.Parts))
 		a.Images++
@@ -345,6 +350,10 @@ func aiAddStoredFile(a *aiAttachment, name string, in interface {
 		return e
 	}
 	kind := aiAttachmentFileKind(name)
+	automatic := kind == "auto"
+	if kind == "auto" {
+		kind = aiDetectAttachmentKind(in, size)
+	}
 	if aiAttachmentSkip(name) || kind == "" {
 		a.Skipped = append(a.Skipped, name)
 		return nil
@@ -417,6 +426,11 @@ func aiAddStoredFile(a *aiAttachment, name string, in interface {
 		p, e = aiStoreDOCX(name, in, size)
 	case "image":
 		p, e = aiStoreImage(name, in)
+	case "binary":
+		p, e = aiStoreBinary(name, in, size)
+	}
+	if e != nil && automatic && kind == "text" {
+		p, e = aiStoreBinary(name, in, size)
 	}
 	if e != nil {
 		return fmt.Errorf("%s：%w", name, e)
@@ -483,7 +497,7 @@ func aiAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if !committed {
 			for _, part := range a.Parts[originalParts:] {
-				for ext, id := range map[string]string{".txt": part.TextID, ".jpg": part.ImageID} {
+				for ext, id := range map[string]string{".txt": part.TextID, ".jpg": part.ImageID, ".bin": part.BinaryID} {
 					if id != "" {
 						if p, e := aiContentPath(id, ext); e == nil {
 							os.Remove(p)
@@ -511,7 +525,7 @@ func aiAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if a.Files == 0 {
-		errOut(w, 400, errors.New("没有可读取的文件。支持文档、文本、代码、PNG/JPG/GIF 和 ZIP；RAR/7Z 请先解压，DOC 请另存 DOCX"))
+		errOut(w, 400, errors.New("没有可读取的文件；开发缓存目录会略过。可添加文档、代码、图片、程序文件或 ZIP"))
 		return
 	}
 	a.SkippedTotal = len(a.Skipped)

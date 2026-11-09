@@ -22,6 +22,7 @@ A Windows desktop workbench that wakes a Colab GPU on demand and turns it into a
 - **AI 页**：
   - 对话：Qwen3.8 27B（GGUF，Ollama 运行在你的 GPU 上），多轮对话、深度思考开关、一键把回复用作生成提示词。
   - 对话附件与技能：添加文档、代码、图片、文件夹或 ZIP；从本地或公开 GitHub 安装 SKILL.md 技能并按模型启用。图片需当前部署模型具备视觉能力；技能中的脚本与外部工具不会自动执行。对话、附件与技能保存在本机。
+  - 自动执行（实验）：已接入的 Qwen3.8 与 DeepSeek-R1-70B-Q5 可在单独开启后使用本机文件、终端和独立浏览器；支持检查结果、失败求助与继续。代码可复制，消息显示时间；另有独立 Qwen 1M 纯文字实验配置。详见 [使用指南](docs/GETTING_STARTED.md#10-自动执行与长上下文1215)。
   - 生图：RealVisXL V5.0（SDXL 写实）、Chroma1-HD（FLUX 架构）。
   - **自定义添加模型**：粘贴 Hugging Face 链接，自动识别类型（GGUF 对话 / SDXL / Chroma / 任意 ComfyUI 模型）、大小与许可证，推荐 GPU 和参数，一键生成启动配置。
 - **两种连接方式**：

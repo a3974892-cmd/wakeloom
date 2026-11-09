@@ -7,6 +7,8 @@ Linux：`python3 scripts/build-linux.py` 生成 amd64/arm64 静态程序、便�
 
 **合规：** 不要把 MiniMax 官方 H3 提示词指南（或其中的句子）放进仓库或 exe——其社区许可限制分发地区。提示词骨架、片段、内置说明都要用自己的措辞，只保留模型要求的字段名（如 `integrated_multimodal_description`、`<Picture 1>`、`[Shot 1]`）。
 
+**当前维护基线：v1.21.5 发布准备（源自 test9-fix3）。** 新增申请独立 HTTP/1.1 与断线同 notebook 查询；用户确认本地账户官网也无法获得 G4，不能宣称该兼容改动修复账户资源限制。 在 test9-fix1 上修复本地分配请求 60 秒提前超时，以及 1M slot 对齐误判；真实 GPU 仍待验收。 用户已取消 Kaggle；恢复 test9，仅保留 test10 自动执行弹窗背景防误关闭。撤回源码已私有备份，不应按历史聊天重新添加 Kaggle。完整验证记录见交接文档。
+
 ## 目录结构
 
 源码已集中到 `app/`。下表代码路径相对 `app/`；`docs/`、`scripts/`、`.github/` 和 `CHANGELOG.md` 相对仓库根目录。构建及套件维护命令先 `cd app`，发布脚本从仓库根目录运行。
@@ -22,9 +24,12 @@ Linux：`python3 scripts/build-linux.py` 生成 amd64/arm64 静态程序、便�
 | `localgate.go`（`//go:embed kit`）、`colab.go`、`colab_auth.go`、`libstore.go`、`local_api.go` | 本地模式（实验）：程序自己当网关，用 Google 账号直接开关 Colab（非公开接口） |
 | `jobs.go`、`templates.go`、`labels.go` | 任务队列、ComfyUI API 工作流模板、参数中文名/推荐值 |
 | `ai.go`、`llm.go` | AI 页对话（经 ComfyUI 的 `/wbllm` 路由到 VM 上的 Ollama）、AI 写提示词（内置原创的通用说明 `builtinPromptGuide`；用户可导入 H3 官方指南到 `<dataDir>/prompts/h3_guide.md`，有则优先用） |
+| `ai_agent*.go`、`ui/ai-agent.js` | Windows 自动执行实验：仅 DeepSeek-R1-70B-Q5/Qwen3.8，用户单独开始；严格 JSON 动作、真实工具结果、暂停补充、取消/重试/容量控制。test9 共用错误恢复、重复阻断和主动求助，真实回答后继续；求助临时替代聊天输入区。文件工具限定目录；PowerShell 非沙盒，独立浏览器 CDP，不是任意桌面应用控制。执行日志/备份只存用户目录，不嵌入 exe |
 | `ai_attachments.go`、`ai_skills*.go`、`ai_chat_state.go` | AI 对话附件解析、SKILL.md 与 GitHub 导入、本机持久化；内容存数据目录，绝不把用户附件或导入技能嵌入 exe。图片核对实际视觉能力；技能脚本不执行 |
+| `ai_binary.go` | 程序/未知二进制静态报告、原文件磁盘保存及内容探测；不执行上传文件。报告标注结构和字符串采样范围，聊天选段保留“静态报告”标记；失败/取消清理新内容文件 |
 | `ai_attachment_store.go`、`ai_attachment_context.go`、`ai_skill_batch.go` | 大附件使用磁盘内容缓存并按问题选段，回复披露实际片段；技能整库批量安装、重试和用户消息点名临时调用。安装全部不等于全部启用 |
 | `ai_context.go`、`ai_vision.go`、`ui/ai-vision.js` | 自动打包近期上下文/技能节选，保留完整本机数据；本地已就绪会话可补装匹配视觉组件，按 VM 实际模型名发送。网关补装需独立 VPS helper，不能通过聊天代理执行任意安装命令 |
+| `ai_long_context.go`、`gateway/src/long_context.py` | 独立 1M 实验纯文字配置：固定 llama.cpp/YaRN、运行容量确认、模板 token 计数、超限重打包与流式转换；原 Ollama 路径保留。生成器同步到 kit，不手改生成文件。真实 GPU/满窗口效果待验收 |
 | `gpu.go` | GPU/系统负载面板 |
 | `custom_models.go` | 「添加模型」：解析 HF 链接、读 HF API（走 proxy.go 的 transport）、识别四种类型、推荐 GPU、生成并校验 profile.yaml（`validateProfileYAML` 是 kit/gate/profiles.py `parse_profile` 的 Go 版）；本地网关的 `/_gate/custom-profiles` |
 | `ui/models.js` | 「添加模型」弹窗、设置里的自定义模型列表（依赖 app.js / ai.js 的全局函数） |
@@ -53,6 +58,7 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H wi
 
 - 可在 Linux 上测试和交叉编译（Go 1.24.7，见 go.mod）。
 - 部分测试需要环境变量（如 `JUPYTER_TEST_URL`），没设会自动跳过。
+- `CKWB_TEST_AGENT_BROWSER=1 go test ./...` 启用实际本机 Edge/Chrome 隔离浏览器测试；自动任务测试用模拟模型与临时目录，不接真实 GPU。Windows 命令测试验证取消及后台子进程清理。普通聊天/附件保持不执行；自动任务必须由用户单独启用。
 - 调试：`CKWB_HEADLESS=1 [CKWB_PORT=xxxx] go run .` 只起本地服务、打印 URL，不开窗口。UI 测试用的假服务地址：`CKWB_HF_BASE`（Hugging Face API，数据见 `testdata/hf/`）、`CKWB_GOOGLE_TOKEN_URL`（Google 令牌接口）、`CKWB_COLAB_BASE`（Colab `/tun/m` 接口）。空的 `HOME`/`APPDATA` 启动时会自动弹出新手引导。
 - `custom_models_test.go` 会调用 python3 + PyYAML 用 kit 的 `parse_profile` 交叉校验 Go 生成的 YAML，并比对 `MODEL_DIRS`；改目录列表或校验规则时两边要同步（Python 侧在 `gateway/src/edits.py` 的 `MODEL_DIRS` / `CUSTOM`）。
 - 图标/版本资源改动后：`go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64 --out rsrc`

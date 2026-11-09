@@ -14,7 +14,7 @@ function aiAttachmentCards(attachments, removable = false) {
   if (!attachments.length) return "";
   return `<div class="ai-attachment-list">` + attachments.map(a => {
     const pictures = (a.image_parts || []).map(i => `<img alt="${esc(a.name)}" loading="lazy" src="/api/ai/attachments/${encodeURIComponent(a.id)}/preview/${i}?k=${encodeURIComponent(KEY)}">`).join("");
-    return `<div class="ai-attachment"><div class="ai-attachment-label"><b title="${esc(a.name)}">${esc(a.name)}</b>${removable ? `<button type="button" class="btn ghost xs" data-attach-remove="${esc(a.id)}" aria-label="移除 ${esc(a.name)}">×</button>` : ""}</div><span class="muted small">${a.files || 1} 个文件${a.chars ? ` · ${a.chars} 字` : ""}${a.images ? ` · ${a.images} 张图片` : ""}</span>${pictures ? `<div class="ai-attachment-pictures">${pictures}</div>` : ""}${a.skipped && a.skipped.length ? `<details class="small muted"><summary>已略过 ${a.skipped_total||a.skipped.length} 项</summary><div>${a.skipped.map(esc).join("<br>")}</div></details>` : ""}</div>`;
+    return `<div class="ai-attachment"><div class="ai-attachment-label"><b title="${esc(a.name)}">${esc(a.name)}</b>${removable ? `<button type="button" class="btn ghost xs" data-attach-remove="${esc(a.id)}" aria-label="移除 ${esc(a.name)}">×</button>` : ""}</div><span class="muted small">${a.files || 1} 个文件${a.chars ? ` · ${a.chars} 字` : ""}${a.images ? ` · ${a.images} 张图片` : ""}</span>${a.binary_files ? `<p class="hint">${a.binary_files} 个程序/二进制：原文件保存在本机，发送静态报告；未执行、未反编译。</p>` : ""}${pictures ? `<div class="ai-attachment-pictures">${pictures}</div>` : ""}${a.skipped && a.skipped.length ? `<details class="small muted"><summary>已略过 ${a.skipped_total||a.skipped.length} 项</summary><div>${a.skipped.map(esc).join("<br>")}</div></details>` : ""}</div>`;
   }).join("") + `</div>`;
 }
 function aiAttachmentsRender() {
@@ -23,9 +23,9 @@ function aiAttachmentsRender() {
   $$("[data-attach-remove]", box).forEach(b => { b.disabled = !!AI.busy || AIA.uploading; b.onclick = () => { AIA.drafts[aiAttachmentDraftKey()] = list.filter(a => a.id !== b.dataset.attachRemove); aiAttachmentStatus(""); }; });
   $("#aiAttachFiles").disabled = $("#aiAttachFolder").disabled = !!AI.busy || AIA.uploading;
   const s = AIA.status[aiAttachmentDraftKey()]; const status = $("#aiAttachStatus"); status.hidden = !s || !s.text; status.textContent = s ? s.text : ""; status.classList.toggle("err", !!(s && s.error));
-  $("#aiAttachHint").textContent = AI.info && AI.info.vision === false ? "文档按需选段 · 当前模型未启用图片理解" : "大文件分批读取 · 可拖入文件或粘贴截图";
+  $("#aiAttachHint").textContent = AI.info?.llm?.engine === "llama_cpp_1m" ? "1M 实验 · 文字、文档与程序静态报告 · 图片请用看图配置" : AI.info && AI.info.vision === false ? "按内容读取 · 支持程序静态分析 · 图片需启用看图" : "按内容读取 · 程序静态分析 · 可拖入文件";
   $("#aiAttachCancel").hidden = !AIA.uploading;
-  $("#aiVisionBtn").hidden=!(AI.info&&AI.info.vision===false);
+  $("#aiVisionBtn").hidden=AI.info?.llm?.engine==="llama_cpp_1m"||!(AI.info&&AI.info.vision===false);
   if (AIA.uploading && !AI.busy) $("#aiSend").disabled = true;
 }
 async function aiAddAttachments(files) {
@@ -73,6 +73,6 @@ aiDropArea.addEventListener("drop", async e => {
   try { for (const entry of entries) await read(entry); await aiAddAttachments(files); } catch (err) { aiAttachmentStatus(err.message, true); }
 });
 
-function aiAttachmentUsageHTML(items){if(!items||!items.length)return "";return `<details class="ai-attachment-usage ai-skill-usage"><summary>本次附件：${items.reduce((n,a)=>n+a.used_files,0)} 个文件 · ${items.reduce((n,a)=>n+a.chars,0)} 字 · ${items.reduce((n,a)=>n+a.images,0)} 张图片</summary>${items.map(a=>`<div><b>${esc(a.name)}</b>：${a.used_files}/${a.files} 个文件，${a.chars}/${a.total_chars} 字${a.omitted_images?`，另有 ${a.omitted_images} 张图片未带入`:""}<br>${a.excerpts.map(p=>`${esc(p.name)} · 第 ${p.start}–${p.end} 字`).join("<br>")}</div>`).join("")}<p>文件完整文字保存在本机；本次按问题选用片段，可在下一条消息中指定文件名与关注内容。</p></details>`;}
+function aiAttachmentUsageHTML(items){if(!items||!items.length)return "";return `<details class="ai-attachment-usage ai-skill-usage"><summary>本次附件：${items.reduce((n,a)=>n+a.used_files,0)} 个文件 · ${items.reduce((n,a)=>n+a.chars,0)} 字 · ${items.reduce((n,a)=>n+a.images,0)} 张图片</summary>${items.map(a=>`<div><b>${esc(a.name)}</b>：${a.used_files}/${a.files} 个文件，${a.chars}/${a.total_chars} 字${a.omitted_images?`，另有 ${a.omitted_images} 张图片未带入`:""}<br>${a.excerpts.map(p=>`${esc(p.name)} · 第 ${p.start}–${p.end} 字`).join("<br>")}</div>`).join("")}<p>文件文字或程序静态报告保存在本机；本次按问题选用片段，可在下一条消息中指定文件名与关注内容。</p></details>`;}
 
-function aiContextUsageHTML(info){if(!info)return "";return `<p class="hint ai-context-usage">本次已自动整理上下文：${info.history_omitted?`较早 ${info.history_omitted} 条记录未重复发送；`:""}${info.skill_excerpts?`${info.skill_excerpts} 个技能主说明按问题选段；`:""}${info.skipped_skills?`${info.skipped_skills} 个技能本次未带入；`:""}完整记录和资料仍保存在本机。</p>`;}
+function aiContextUsageHTML(info){if(!info)return "";return `<p class="hint ai-context-usage">${info.context_tokens?`1M 实验 · 本次输入 ${Number(info.input_tokens).toLocaleString()} tokens · 预留 16,384 tokens 用于回复；`:""}本次带入历史 ${info.history_used || 0}/${info.history_total || 0} 条；${info.history_excerpted?`其中 ${info.history_excerpted} 条长消息保留首尾节选；`:""}${info.history_omitted?`${info.history_omitted} 条较早记录未带入；`:""}${info.skill_excerpts?`${info.skill_excerpts} 个技能主说明按问题选段；`:""}${info.skipped_skills?`${info.skipped_skills} 个技能本次未带入；`:""}完整记录和资料仍保存在本机。</p>`;}

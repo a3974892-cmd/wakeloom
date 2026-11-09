@@ -918,7 +918,7 @@ func (g *LocalGate) loop() {
 		if idle <= 0 {
 			idle = 30 * time.Minute
 		}
-		if ws == 0 && store.pending() == 0 && time.Since(last) > idle {
+		if ws == 0 && store.pending() == 0 && !agentActive.Load() && time.Since(last) > idle {
 			ud.beforeStop()
 			g.stop(fmt.Sprintf("闲置 %d 分钟，自动停机", int(idle.Minutes())))
 			continue

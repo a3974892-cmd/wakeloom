@@ -306,7 +306,7 @@ func maybeAutoStop() {
 		return
 	}
 	c := getConfig()
-	if !c.AutoStopIdle || autoStopped || time.Since(lastActivity) < 3*time.Minute || store.pending() > 0 {
+	if !c.AutoStopIdle || autoStopped || agentActive.Load() || time.Since(lastActivity) < 3*time.Minute || store.pending() > 0 {
 		return
 	}
 	if st, err := gateState(); err == nil && st == "ready" {

@@ -30,7 +30,7 @@ LOCAL_SETUP = {E.LOCAL_SETUP!r}
 APP = {E.APP!r}
 SESSION = {E.SESSION!r}
 TEST_CUSTOM = {E.TEST_CUSTOM!r}
-NEW_PROFILES = {{"qwen38-27b-chat": {E.PROFILE_QWEN!r}, "qwen38-27b-vision": {E.PROFILE_QWEN_VISION!r}, "realvisxl-v5": {E.PROFILE_REALVIS!r}, "chroma1-hd": {E.PROFILE_CHROMA!r}}}
+NEW_PROFILES = {{"qwen38-27b-chat": {E.PROFILE_QWEN!r}, "qwen38-27b-vision": {E.PROFILE_QWEN_VISION!r}, "qwen38-27b-1m": {E.PROFILE_QWEN_1M!r}, "realvisxl-v5": {E.PROFILE_REALVIS!r}, "chroma1-hd": {E.PROFILE_CHROMA!r}}}
 
 
 def main():
@@ -69,7 +69,7 @@ def main():
             n = out.count(old)
             if n != 1:
                 sys.exit(f"✗ {{layout[key]}}: expected 1 match, found {{n}}:\\n    {{old.strip()[:90]}}\\n"
-                         "Nothing was changed. Send this output to Claude.")
+                         "Nothing was changed. Send this output to the Wakeloom maintainer.")
             out = out.replace(old, new)
             changed += 1
         if not changed:
@@ -78,7 +78,7 @@ def main():
         try:
             compile(out, str(p), "exec")
         except SyntaxError as e:
-            sys.exit(f"✗ {{layout[key]}} would not compile ({{e}}). Nothing was changed. Send this output to Claude.")
+            sys.exit(f"✗ {{layout[key]}} would not compile ({{e}}). Nothing was changed. Send this output to the Wakeloom maintainer.")
         todo.append((p, out, changed))
     for p, out, changed in todo:
         p.with_suffix(p.suffix + ".bak").write_bytes(p.read_bytes())
