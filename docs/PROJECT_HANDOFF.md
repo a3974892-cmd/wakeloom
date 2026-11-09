@@ -6,11 +6,11 @@ Wakeloom 是按需使用 Colab GPU 的桌面工作台，提供 ComfyUI 图片/�
 
 v1.21.5 发布补充：修复旧桌面图标迁移。Windows 正常启动时后台写入由内嵌 W 图标生成的内容寻址 ICO，只更新当前 EXE 对应的用户/公共桌面快捷方式，保留启动参数与目标；兼容 8.3 短路径。直接放在桌面的 EXE 每版本/路径通知 Shell 刷新图标缓存，不删除系统缓存或重启 Explorer。headless 不操作桌面。真实 Windows 临时快捷方式覆盖中文/特殊字符路径、目标/参数/目录/样式保留、其他应用不变及重复运行幂等；全量 Go 通过（9.379 秒），最终调整定向复测通过。实际用户桌面显示仍待升级验收。
 
-发布首轮 CI 停于缓存补丁 AST 指纹检查：新版 Python 默认省略空字段；修正为 Python 3.13+ 显式包含空字段，保留原始白名单哈希及变更拒绝。本机 Python 缓存测试 7 项通过，远端新版 Python 待重跑验证。首轮失败未生成正式 Release。
+发布首轮 CI 停于缓存补丁 AST 指纹检查：新版 Python 默认省略空字段；修正为 Python 3.13+ 显式包含空字段，保留原始白名单哈希及变更拒绝。本机 Python 缓存测试 7 项通过；远端新版 Python 重跑已通过。首轮失败未生成正式 Release。
 
-**v1.21.5 发布准备（2026-11-09，待远端验证）。** 用户授权同步 GitHub；基于 test9-fix3 汇总此前未发布功能，升级版本及 Windows 资源，补充导入/缓存测试和配套缓存脚本附件。仅 Windows，无 Kaggle，不操作生产网关或真实 GPU。当前主分支原始作者均为维护者且无 Claude 共同作者尾注；旧开发分支仍保留历史，首页贡献者显示需发布后核对，不因本次发版擅自重写历史或删除旧标签。
+**v1.21.5 正式发布并验证（2026-11-09）。** [Release](https://github.com/a3974892-cmd/wakeloom/releases/tag/v1.21.5) 与标签指向 `6b2878508a91e744045f3122ef1bb15c8a003545`；[Actions 42600733400](https://github.com/a3974892-cmd/wakeloom/actions/runs/42600733400) 全部通过。已重新下载 Windows EXE、latest.json 和网关 ZIP，核对更新清单/Release 摘要及 ZIP 完整性；`/releases/latest/download/latest.json` 实际返回 1.21.5。Windows EXE 11,474,944 字节，SHA-256 `260dfe86802e377f9e67aaa3e51af91c82ad227196f9769cf58e7dc855deacd0`，文件/产品版本均为 1.21.5。仅 Windows，无 Linux 附件，无 Kaggle；未部署生产网关或启停 GPU。主分支原始作者均为维护者、无 Claude 共同作者；贡献者 API 仅列 a3974892-cmd，但本次浏览器实查首页仍显示 Claude，首页统计刷新尚未完成，不宣称已消失。保留旧历史分支与标签。
 
-**当前本地测试版：1.21.5-test9-fix3，申请连接兼容改进，未发布。** 用户在 fix2 本地申请 G4 时遇到 unexpected EOF，诊断显示 GET 正常、POST 经本机代理分别约 25 秒与 10 秒断开。只读 assignments 查询为 0。用户随后确认：本地可分配 L4；本地账户在 Colab 官网也无法分配 G4；另一个余额不同的网关账户可以分配 G4。该对照说明问题不只发生在 Wakeloom，应优先检查 Colab 对该账户的 G4 可用性；不能断言余额低于某个官方门槛或代理就是根因。程序的 10 CU 只是本地启动预留检查，账户已通过。官方资源限制说明：https://research.google.com/colaboratory/faq.html 。
+**历史本地测试版：1.21.5-test9-fix3，申请连接兼容改进，未发布。** 用户在 fix2 本地申请 G4 时遇到 unexpected EOF，诊断显示 GET 正常、POST 经本机代理分别约 25 秒与 10 秒断开。只读 assignments 查询为 0。用户随后确认：本地可分配 L4；本地账户在 Colab 官网也无法分配 G4；另一个余额不同的网关账户可以分配 G4。该对照说明问题不只发生在 Wakeloom，应优先检查 Colab 对该账户的 G4 可用性；不能断言余额低于某个官方门槛或代理就是根因。程序的 10 CU 只是本地启动预留检查，账户已通过。官方资源限制说明：https://research.google.com/colaboratory/faq.html 。
 
 仅申请使用的克隆 transport 改用 HTTP/1.1（同步清理克隆 TLS ALPN 的 h2），保留代理、TLS 校验、原 3 分钟总时限及停止能力，其他请求保持。POST 网络中断或响应体截断后，用同一 notebook hash 做一次最多 20 秒的 GET 核对，受原总时限约束；找到完整运行时则接回，否则明确结果未确认、未重发申请，并提示在 Colab 检查。明确拒绝仍显示原错误，不接管其他 notebook；既有 HTTP 502/503/504 重试策略未改。该兼容改进不能保证获得 G4，不代表账户侧问题已修复。
 
